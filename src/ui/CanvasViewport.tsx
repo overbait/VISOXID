@@ -4,14 +4,20 @@ import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
 import { distance, toDegrees } from '../utils/math';
 import type { PathEntity, Vec2 } from '../types';
+import {
+  canvasDistanceToWorld,
+  canvasToWorld,
+  computeViewTransform,
+  type ViewTransform,
+} from '../canvas/viewTransform';
 import { DirectionalCompass } from './DirectionalCompass';
 
 type DragTarget =
   | { kind: 'anchor'; pathId: string; nodeId: string }
   | { kind: 'handleIn' | 'handleOut'; pathId: string; nodeId: string };
 
-const nodeHitThreshold = 12;
-const pathHitThreshold = 10;
+const nodeHitThresholdPx = 12;
+const pathHitThresholdPx = 10;
 
 const pointSegmentDistance = (p: Vec2, a: Vec2, b: Vec2): number => {
   const ab = { x: b.x - a.x, y: b.y - a.y };
@@ -43,7 +49,7 @@ export const CanvasViewport = () => {
   const toggleSegmentCurve = useWorkspaceStore((state) => state.toggleSegmentCurve);
   const measureStart = useRef<Vec2 | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
-  const penDraft = useRef<{ pathId: string } | null>(null);
+  const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
 
   useEffect(() => {
@@ -54,26 +60,39 @@ export const CanvasViewport = () => {
     return () => renderer.stop();
   }, []);
 
-  const getPointerPos = (event: PointerEvent<HTMLCanvasElement>): Vec2 => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    return {
+  const getPointerContext = (event: PointerEvent<HTMLCanvasElement>): {
+    world: Vec2;
+    canvas: Vec2;
+    view: ViewTransform;
+  } => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      const view = computeViewTransform(1, 1);
+      return { world: { x: 0, y: 0 }, canvas: { x: 0, y: 0 }, view };
+    }
+    const rect = canvas.getBoundingClientRect();
+    const canvasPoint = {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
+    const view = computeViewTransform(rect.width, rect.height);
+    const world = canvasToWorld(canvasPoint, view);
+    return { world, canvas: canvasPoint, view };
   };
 
-  const hitTestNodes = (position: Vec2): DragTarget | null => {
+  const hitTestNodes = (position: Vec2, view: ViewTransform): DragTarget | null => {
     const state = useWorkspaceStore.getState();
     const ordered = orderPathsBySelection(state.paths, state.selectedPathIds);
+    const threshold = canvasDistanceToWorld(nodeHitThresholdPx, view);
     for (const path of ordered) {
       for (const node of path.nodes) {
-        if (distance(position, node.point) <= nodeHitThreshold) {
+        if (distance(position, node.point) <= threshold) {
           return { kind: 'anchor', pathId: path.meta.id, nodeId: node.id };
         }
-        if (node.handleIn && distance(position, node.handleIn) <= nodeHitThreshold) {
+        if (node.handleIn && distance(position, node.handleIn) <= threshold) {
           return { kind: 'handleIn', pathId: path.meta.id, nodeId: node.id };
         }
-        if (node.handleOut && distance(position, node.handleOut) <= nodeHitThreshold) {
+        if (node.handleOut && distance(position, node.handleOut) <= threshold) {
           return { kind: 'handleOut', pathId: path.meta.id, nodeId: node.id };
         }
       }
@@ -81,19 +100,20 @@ export const CanvasViewport = () => {
     return null;
   };
 
-  const hitTestPath = (position: Vec2): string | null => {
+  const hitTestPath = (position: Vec2, view: ViewTransform): string | null => {
     const state = useWorkspaceStore.getState();
+    const threshold = canvasDistanceToWorld(pathHitThresholdPx, view);
     for (const path of state.paths) {
       const samples = path.sampled?.samples ?? [];
       if (samples.length) {
         for (let i = 1; i < samples.length; i += 1) {
-          if (pointSegmentDistance(position, samples[i - 1].position, samples[i].position) <= pathHitThreshold) {
+          if (pointSegmentDistance(position, samples[i - 1].position, samples[i].position) <= threshold) {
             return path.meta.id;
           }
         }
       } else if (path.nodes.length > 1) {
         for (let i = 1; i < path.nodes.length; i += 1) {
-          if (pointSegmentDistance(position, path.nodes[i - 1].point, path.nodes[i].point) <= pathHitThreshold) {
+          if (pointSegmentDistance(position, path.nodes[i - 1].point, path.nodes[i].point) <= threshold) {
             return path.meta.id;
           }
         }
@@ -104,8 +124,10 @@ export const CanvasViewport = () => {
 
   const hitTestSegment = (
     position: Vec2,
+    view: ViewTransform,
   ): { pathId: string; segmentIndex: number } | null => {
     const state = useWorkspaceStore.getState();
+    const threshold = canvasDistanceToWorld(pathHitThresholdPx, view);
     for (const path of state.paths) {
       const { nodes } = path;
       const totalSegments = path.meta.closed ? nodes.length : nodes.length - 1;
@@ -113,7 +135,7 @@ export const CanvasViewport = () => {
       for (let i = 0; i < totalSegments; i += 1) {
         const a = nodes[i].point;
         const b = nodes[(i + 1) % nodes.length].point;
-        if (pointSegmentDistance(position, a, b) <= pathHitThreshold) {
+        if (pointSegmentDistance(position, a, b) <= threshold) {
           return { pathId: path.meta.id, segmentIndex: i };
         }
       }
@@ -136,8 +158,10 @@ export const CanvasViewport = () => {
     );
   };
 
-  const handlePenInput = (position: Vec2, clicks: number) => {
+  const handlePenInput = (position: Vec2, view: ViewTransform, clicks: number) => {
     const state = useWorkspaceStore.getState();
+    const threshold = canvasDistanceToWorld(nodeHitThresholdPx, view);
+    const closeThreshold = canvasDistanceToWorld(nodeHitThresholdPx + 4, view);
     if (!penDraft.current) {
       const pathId = addPath(
         [
@@ -161,7 +185,7 @@ export const CanvasViewport = () => {
           },
         },
       );
-      penDraft.current = { pathId };
+      penDraft.current = { pathId, activeEnd: 'end' };
       setSelected([pathId]);
       setCursorHint('Click to add points, double-click first point to close');
       return;
@@ -173,7 +197,8 @@ export const CanvasViewport = () => {
       return;
     }
     const firstNode = path.nodes[0];
-    if (path.nodes.length >= 3 && distance(position, firstNode.point) < nodeHitThreshold + 4) {
+    const lastNode = path.nodes[path.nodes.length - 1];
+    if (path.nodes.length >= 3 && distance(position, firstNode.point) <= closeThreshold) {
       setPathMeta(path.meta.id, { closed: true });
       penDraft.current = null;
       setCursorHint(null);
@@ -185,19 +210,35 @@ export const CanvasViewport = () => {
       setCursorHint(null);
       return;
     }
-    updatePath(path.meta.id, (nodes) => [
-      ...nodes,
-      {
-        id: createId('node'),
-        point: position,
-        handleIn: null,
-        handleOut: null,
-      },
-    ]);
+    const nearStart = distance(position, firstNode.point) <= threshold;
+    const nearEnd = distance(position, lastNode.point) <= threshold;
+    if (nearStart) {
+      penDraft.current = { pathId: path.meta.id, activeEnd: 'start' };
+      setSelected([path.meta.id]);
+      setCursorHint('Extending from starting node');
+      return;
+    }
+    if (nearEnd) {
+      penDraft.current = { pathId: path.meta.id, activeEnd: 'end' };
+      setSelected([path.meta.id]);
+      setCursorHint('Extending from ending node');
+      return;
+    }
+    const newNode = {
+      id: createId('node'),
+      point: position,
+      handleIn: null,
+      handleOut: null,
+    };
+    if (penDraft.current.activeEnd === 'start') {
+      updatePath(path.meta.id, (nodes) => [newNode, ...nodes]);
+    } else {
+      updatePath(path.meta.id, (nodes) => [...nodes, newNode]);
+    }
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
-    const position = getPointerPos(event);
+    const { world: position, view } = getPointerContext(event);
     if (activeTool === 'measure') {
       const probe = {
         id: createId('probe'),
@@ -212,12 +253,12 @@ export const CanvasViewport = () => {
       return;
     }
     if (activeTool === 'pen') {
-      handlePenInput(position, event.detail);
+      handlePenInput(position, view, event.detail);
       canvasRef.current?.setPointerCapture(event.pointerId);
       return;
     }
     if (activeTool === 'select' || activeTool === 'edit') {
-      const target = hitTestNodes(position);
+      const target = hitTestNodes(position, view);
       if (target) {
         dragTarget.current = target;
         setSelected([target.pathId]);
@@ -225,19 +266,17 @@ export const CanvasViewport = () => {
         canvasRef.current?.setPointerCapture(event.pointerId);
         return;
       }
-      if (activeTool === 'edit') {
-        const segment = hitTestSegment(position);
-        if (segment && event.detail >= 2) {
-          toggleSegmentCurve(segment.pathId, segment.segmentIndex);
-          setSelected([segment.pathId]);
-          return;
-        }
-        if (segment) {
-          setSelected([segment.pathId]);
-          return;
-        }
+      const segment = hitTestSegment(position, view);
+      if (segment && event.detail >= 2) {
+        toggleSegmentCurve(segment.pathId, segment.segmentIndex);
+        setSelected([segment.pathId]);
+        return;
       }
-      const pathId = hitTestPath(position);
+      if (activeTool === 'edit' && segment) {
+        setSelected([segment.pathId]);
+        return;
+      }
+      const pathId = hitTestPath(position, view);
       if (pathId) {
         setSelected([pathId]);
       } else if (!event.shiftKey) {
@@ -248,7 +287,7 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    const position = getPointerPos(event);
+    const { world: position } = getPointerContext(event);
     if (activeTool === 'measure' && measureStart.current && measurements.activeProbe) {
       const dist = distance(measureStart.current, position);
       const angle = toDegrees(Math.atan2(position.y - measureStart.current.y, position.x - measureStart.current.x));

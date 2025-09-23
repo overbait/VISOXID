@@ -1,9 +1,11 @@
 import type { PathEntity } from '../types';
+import { worldToCanvas, type ViewTransform } from './viewTransform';
 
 export const drawHandles = (
   ctx: CanvasRenderingContext2D,
   path: PathEntity,
   selected: boolean,
+  view: ViewTransform,
 ): void => {
   if (!selected) return;
   ctx.save();
@@ -12,21 +14,24 @@ export const drawHandles = (
   ctx.lineWidth = 1;
   path.nodes.forEach((node) => {
     const { point, handleIn, handleOut } = node;
+    const screenPoint = worldToCanvas(point, view);
     if (handleIn) {
+      const screenHandleIn = worldToCanvas(handleIn, view);
       ctx.beginPath();
-      ctx.moveTo(point.x, point.y);
-      ctx.lineTo(handleIn.x, handleIn.y);
+      ctx.moveTo(screenPoint.x, screenPoint.y);
+      ctx.lineTo(screenHandleIn.x, screenHandleIn.y);
       ctx.stroke();
-      drawHandlePoint(ctx, handleIn.x, handleIn.y, false);
+      drawHandlePoint(ctx, screenHandleIn.x, screenHandleIn.y, false);
     }
     if (handleOut) {
+      const screenHandleOut = worldToCanvas(handleOut, view);
       ctx.beginPath();
-      ctx.moveTo(point.x, point.y);
-      ctx.lineTo(handleOut.x, handleOut.y);
+      ctx.moveTo(screenPoint.x, screenPoint.y);
+      ctx.lineTo(screenHandleOut.x, screenHandleOut.y);
       ctx.stroke();
-      drawHandlePoint(ctx, handleOut.x, handleOut.y, false);
+      drawHandlePoint(ctx, screenHandleOut.x, screenHandleOut.y, false);
     }
-    drawHandlePoint(ctx, point.x, point.y, true);
+    drawHandlePoint(ctx, screenPoint.x, screenPoint.y, true);
   });
   ctx.restore();
 };

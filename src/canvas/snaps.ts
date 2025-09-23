@@ -1,9 +1,11 @@
 import type { MeasurementState, PathEntity } from '../types';
+import { worldToCanvas, type ViewTransform } from './viewTransform';
 
 export const drawSnaps = (
   ctx: CanvasRenderingContext2D,
   paths: PathEntity[],
   measurements: MeasurementState,
+  view: ViewTransform,
 ): void => {
   if (!measurements.snapping) return;
   ctx.save();
@@ -15,14 +17,17 @@ export const drawSnaps = (
       if (snapPoints.has(key)) return;
       snapPoints.add(key);
       ctx.beginPath();
-      ctx.arc(node.point.x, node.point.y, 3, 0, Math.PI * 2);
+      const screen = worldToCanvas(node.point, view);
+      ctx.arc(screen.x, screen.y, 3, 0, Math.PI * 2);
       ctx.fill();
     });
   });
   if (measurements.activeProbe) {
     const { a, b } = measurements.activeProbe;
-    drawSnap(ctx, a.x, a.y, true);
-    drawSnap(ctx, b.x, b.y, true);
+    const aScreen = worldToCanvas(a, view);
+    const bScreen = worldToCanvas(b, view);
+    drawSnap(ctx, aScreen.x, aScreen.y, true);
+    drawSnap(ctx, bScreen.x, bScreen.y, true);
   }
   ctx.restore();
 };

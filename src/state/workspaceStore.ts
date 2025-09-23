@@ -205,7 +205,48 @@ const deriveInnerGeometry = (
     Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
   polygons[0]);
   const resampled = resampleClosedPolygon(primary, samples.length);
-  return { innerSamples: resampled.length ? resampled : inner, polygons };
+  const aligned = alignClosedSequence(resampled, inner);
+  return { innerSamples: aligned.length ? aligned : inner, polygons };
+};
+
+const alignClosedSequence = (source: Vec2[], target: Vec2[]): Vec2[] => {
+  if (!source.length || source.length !== target.length) {
+    return source;
+  }
+  const length = source.length;
+  const findBestOffset = (points: Vec2[]): number => {
+    let bestIndex = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < length; i += 1) {
+      const dx = points[i].x - target[0].x;
+      const dy = points[i].y - target[0].y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < bestDist) {
+        bestDist = distSq;
+        bestIndex = i;
+      }
+    }
+    return bestIndex;
+  };
+  const rotate = (points: Vec2[], offset: number): Vec2[] =>
+    points.map((_, idx) => points[(idx + offset) % length]);
+  const forwardOffset = findBestOffset(source);
+  const forward = rotate(source, forwardOffset);
+  const reversedSource = [...source].reverse();
+  const reverseOffset = findBestOffset(reversedSource);
+  const reversed = rotate(reversedSource, reverseOffset);
+  const sampleError = (points: Vec2[]): number => {
+    const samples = Math.min(points.length, 24);
+    let total = 0;
+    for (let i = 0; i < samples; i += 1) {
+      const idx = Math.floor((i / samples) * points.length);
+      const dx = points[idx].x - target[idx].x;
+      const dy = points[idx].y - target[idx].y;
+      total += dx * dx + dy * dy;
+    }
+    return total;
+  };
+  return sampleError(forward) <= sampleError(reversed) ? forward : reversed;
 };
 
 const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({

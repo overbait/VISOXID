@@ -1,9 +1,11 @@
 import type { MeasurementState } from '../types';
 import { toDegrees } from '../utils/math';
+import { worldToCanvas, type ViewTransform } from './viewTransform';
 
 export const drawMeasurements = (
   ctx: CanvasRenderingContext2D,
   measurements: MeasurementState,
+  view: ViewTransform,
 ): void => {
   ctx.save();
   ctx.strokeStyle = '#2563eb';
@@ -13,12 +15,14 @@ export const drawMeasurements = (
     ? [measurements.activeProbe, ...measurements.history]
     : measurements.history;
   probes.slice(0, 1).forEach((probe) => {
+    const aScreen = worldToCanvas(probe.a, view);
+    const bScreen = worldToCanvas(probe.b, view);
     ctx.beginPath();
-    ctx.moveTo(probe.a.x, probe.a.y);
-    ctx.lineTo(probe.b.x, probe.b.y);
+    ctx.moveTo(aScreen.x, aScreen.y);
+    ctx.lineTo(bScreen.x, bScreen.y);
     ctx.stroke();
-    const midX = (probe.a.x + probe.b.x) / 2;
-    const midY = (probe.a.y + probe.b.y) / 2;
+    const midX = (aScreen.x + bScreen.x) / 2;
+    const midY = (aScreen.y + bScreen.y) / 2;
     const distanceLabel = `${probe.distance.toFixed(2)} μm`;
     const angleLabel = `${toDegrees(Math.atan2(probe.b.y - probe.a.y, probe.b.x - probe.a.x)).toFixed(1)}°`;
     drawLabel(ctx, midX, midY, `${distanceLabel} • ${angleLabel}`);

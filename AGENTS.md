@@ -34,3 +34,10 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Path endpoints auto-close when they approach within ~4 μm and mirror snapping pins points to the configured axes—avoid bypassing `mergeEndpointsIfClose` or `applyMirrorSnapping` when mutating node arrays.
 - Inner oxidation silhouettes are now cleaned with Clipper before resampling; if you extend the offset logic, feed new contours back through `cleanAndSimplifyPolygons` so ribbons never self-intersect.
 - UI and models now clamp oxide inputs to ≤ 10 μm.  Preserve `MAX_THICKNESS_UM` when introducing new entry points or validation.
+
+## 2024-05-29 — 50 μm viewport, mirrored previews & smarter pen
+
+- The canvas now renders a fixed 50 μm × 50 μm work area.  All canvas drawing helpers accept a `ViewTransform` and must convert world coordinates to screen space via `worldToCanvas`/`computeViewTransform`.
+- Pointer interactions operate in micrometre space.  Use `canvasDistanceToWorld` when comparing hit-test radii so behaviour stays consistent after future zoom tweaks.
+- Mirror preview draws reflected copies instead of duplicating nodes.  Feed any new render passes the workspace `mirror` settings so reflected geometry stays in sync.
+- The pen tool only extends from contour endpoints and honours snaps to existing nodes; re-use `penDraft.activeEnd` when adding new gestural behaviours to avoid spawning duplicate vertices.
