@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  DirectionWeight,
   MeasurementProbe,
   OxidationSettings,
   PathEntity,
@@ -17,15 +18,67 @@ import {
   smoothSamples,
 } from '../geometry';
 
-const defaultOxidation: OxidationSettings = {
-  kernelWidth: 18,
-  targetThickness: 12,
-  baseThickness: 5,
+const createDefaultDirectionWeights = (): DirectionWeight[] => [
+  { dir: 'N', valueUm: 0 },
+  { dir: 'NE', valueUm: 0 },
+  { dir: 'E', valueUm: 0 },
+  { dir: 'SE', valueUm: 0 },
+  { dir: 'S', valueUm: 0 },
+  { dir: 'SW', valueUm: 0 },
+  { dir: 'W', valueUm: 0 },
+  { dir: 'NW', valueUm: 0 },
+];
+
+const createDefaultOxidation = (): OxidationSettings => ({
+  thicknessUniformUm: 5,
+  thicknessByDirection: {
+    items: createDefaultDirectionWeights(),
+    kappa: 4,
+  },
   smoothingIterations: 2,
   smoothingStrength: 0.6,
   evaluationSpacing: 12,
-  vonMisesKappa: 5,
   mirrorSymmetry: false,
+});
+
+const cloneOxidationSettings = (settings: OxidationSettings): OxidationSettings => ({
+  ...settings,
+  thicknessByDirection: {
+    kappa: settings.thicknessByDirection.kappa,
+    items: settings.thicknessByDirection.items.map((item) => ({ ...item })),
+  },
+});
+
+const mergeOxidationSettings = (
+  base: OxidationSettings,
+  patch: Partial<OxidationSettings>,
+): OxidationSettings => {
+  const merged = cloneOxidationSettings(base);
+  if (patch.thicknessUniformUm !== undefined) {
+    merged.thicknessUniformUm = patch.thicknessUniformUm;
+  }
+  if (patch.smoothingIterations !== undefined) {
+    merged.smoothingIterations = patch.smoothingIterations;
+  }
+  if (patch.smoothingStrength !== undefined) {
+    merged.smoothingStrength = patch.smoothingStrength;
+  }
+  if (patch.evaluationSpacing !== undefined) {
+    merged.evaluationSpacing = patch.evaluationSpacing;
+  }
+  if (patch.mirrorSymmetry !== undefined) {
+    merged.mirrorSymmetry = patch.mirrorSymmetry;
+  }
+  if (patch.thicknessByDirection) {
+    const { kappa, items } = patch.thicknessByDirection;
+    merged.thicknessByDirection = {
+      kappa: kappa ?? merged.thicknessByDirection.kappa,
+      items: items
+        ? items.map((item) => ({ ...item }))
+        : merged.thicknessByDirection.items,
+    };
+  }
+  return merged;
 };
 
 const createEmptyState = (): WorkspaceState => ({
@@ -44,7 +97,7 @@ const createEmptyState = (): WorkspaceState => ({
     origin: { x: 0, y: 0 },
     livePreview: true,
   },
-  oxidationDefaults: { ...defaultOxidation },
+  oxidationDefaults: createDefaultOxidation(),
   measurements: {
     activeProbe: null,
     history: [],
@@ -66,7 +119,7 @@ const clonePath = (path: PathEntity): PathEntity => ({
         samples: path.sampled.samples.map((sample) => ({ ...sample })),
       }
     : undefined,
-  oxidation: { ...path.oxidation },
+  oxidation: cloneOxidationSettings(path.oxidation),
   meta: { ...path.meta },
 });
 
@@ -110,7 +163,7 @@ const runGeometryPipeline = (path: PathEntity): PathEntity => {
   const normals = recomputeNormals(sampled.samples);
   const seeded = normals.map((sample) => ({
     ...sample,
-    thickness: path.oxidation.baseThickness,
+    thickness: path.oxidation.thicknessUniformUm,
   }));
   const smoothed = smoothSamples(
     seeded,
@@ -118,10 +171,9 @@ const runGeometryPipeline = (path: PathEntity): PathEntity => {
     path.oxidation.smoothingStrength,
   );
   const withThickness = evalThickness(smoothed, {
-    kernelWidth: path.oxidation.kernelWidth,
-    baseThickness: path.oxidation.baseThickness,
-    targetThickness: path.oxidation.targetThickness,
-    vonMisesKappa: path.oxidation.vonMisesKappa,
+    uniformThickness: path.oxidation.thicknessUniformUm,
+    weights: path.oxidation.thicknessByDirection.items,
+    kappa: path.oxidation.thicknessByDirection.kappa,
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
   });
   const length = accumulateLength(withThickness);
@@ -155,7 +207,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const newPath: PathEntity = runGeometryPipeline({
         meta,
         nodes,
-        oxidation: overrides?.oxidation ? { ...overrides.oxidation } : { ...state.oxidationDefaults },
+        oxidation: overrides?.oxidation
+          ? cloneOxidationSettings(overrides.oxidation)
+          : cloneOxidationSettings(state.oxidationDefaults),
         sampled: undefined,
       });
       return {
@@ -215,10 +269,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     mirror: { ...state.mirror, ...settings },
     dirty: true,
   })),
-  updateOxidationDefaults: (settings) => set((state) => ({
-    oxidationDefaults: { ...state.oxidationDefaults, ...settings },
-    dirty: true,
-  })),
+  updateOxidationDefaults: (settings) =>
+    set((state) => ({
+      oxidationDefaults: mergeOxidationSettings(state.oxidationDefaults, settings),
+      dirty: true,
+    })),
   setProbe: (probe) => set((state) => ({
     measurements: { ...state.measurements, activeProbe: probe },
   })),

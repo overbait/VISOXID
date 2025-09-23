@@ -21,6 +21,18 @@ export interface PathNode {
   timestamp?: number;
 }
 
+export type DirKey = 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW';
+
+export interface DirectionWeight {
+  dir: DirKey;
+  valueUm: number;
+}
+
+export interface WeightsByDirection {
+  items: DirectionWeight[];
+  kappa: number;
+}
+
 export interface PathMeta {
   id: string;
   name: string;
@@ -48,13 +60,11 @@ export interface SampledPath {
 }
 
 export interface OxidationSettings {
-  kernelWidth: number;
-  targetThickness: number;
-  baseThickness: number;
+  thicknessUniformUm: number;
+  thicknessByDirection: WeightsByDirection;
   smoothingIterations: number;
   smoothingStrength: number;
   evaluationSpacing: number;
-  vonMisesKappa: number;
   mirrorSymmetry: boolean;
 }
 
