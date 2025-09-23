@@ -82,7 +82,7 @@ export class CanvasRenderer {
         drawHeatmap(this.ctx, path, view);
       }
       drawContours(this.ctx, path, selected, state.oxidationVisible, view, state.mirror);
-      drawHandles(this.ctx, path, selected, view);
+      drawHandles(this.ctx, path, selected, view, state.nodeSelection);
     });
     drawSnaps(this.ctx, state.paths, state.measurements, view);
     drawMeasurements(this.ctx, state.measurements, view);

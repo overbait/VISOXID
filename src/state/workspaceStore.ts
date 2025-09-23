@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import type {
   DirectionWeight,
+  DirKey,
   MeasurementProbe,
+  NodeSelection,
   OxidationSettings,
   PathEntity,
   PathMeta,
@@ -33,6 +35,33 @@ const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 
 const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
+
+const DIAGONAL_DEPENDENCIES: Array<{ target: DirKey; a: DirKey; b: DirKey }> = [
+  { target: 'NE', a: 'N', b: 'E' },
+  { target: 'SE', a: 'S', b: 'E' },
+  { target: 'SW', a: 'S', b: 'W' },
+  { target: 'NW', a: 'N', b: 'W' },
+];
+
+const autoFillDirectionalWeights = (items: DirectionWeight[]): DirectionWeight[] => {
+  const byDir: Map<DirKey, DirectionWeight> = new Map();
+  items.forEach((item) => {
+    byDir.set(item.dir, { ...item, valueUm: clampThickness(item.valueUm) });
+  });
+  DIAGONAL_DEPENDENCIES.forEach(({ target, a, b }) => {
+    const first = byDir.get(a)?.valueUm ?? 0;
+    const second = byDir.get(b)?.valueUm ?? 0;
+    const average = (first + second) / 2;
+    const existing = byDir.get(target);
+    if (existing) {
+      byDir.set(target, { ...existing, valueUm: average });
+    } else {
+      byDir.set(target, { dir: target, valueUm: average });
+    }
+  });
+  const directions: DirKey[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return directions.map((dir) => byDir.get(dir) ?? { dir, valueUm: 0 });
+};
 
 const loadLibrary = (): StoredShape[] => {
   if (typeof window === 'undefined') return [];
@@ -92,7 +121,7 @@ const cloneOxidationSettings = (settings: OxidationSettings): OxidationSettings 
   ...settings,
   thicknessByDirection: {
     kappa: settings.thicknessByDirection.kappa,
-    items: settings.thicknessByDirection.items.map((item) => ({ ...item })),
+    items: autoFillDirectionalWeights(settings.thicknessByDirection.items),
   },
 });
 
@@ -122,17 +151,13 @@ const mergeOxidationSettings = (
       kappa: kappa ?? merged.thicknessByDirection.kappa,
       items: items
         ? items.map((item) => ({ ...item, valueUm: clampThickness(item.valueUm) }))
-        : merged.thicknessByDirection.items.map((item) => ({
-            ...item,
-            valueUm: clampThickness(item.valueUm),
-          })),
+        : merged.thicknessByDirection.items.map((item) => ({ ...item })),
     };
   }
   merged.thicknessUniformUm = clampThickness(merged.thicknessUniformUm);
-  merged.thicknessByDirection.items = merged.thicknessByDirection.items.map((item) => ({
-    ...item,
-    valueUm: clampThickness(item.valueUm),
-  }));
+  merged.thicknessByDirection.items = autoFillDirectionalWeights(
+    merged.thicknessByDirection.items,
+  );
   return merged;
 };
 
@@ -249,9 +274,23 @@ const alignClosedSequence = (source: Vec2[], target: Vec2[]): Vec2[] => {
   return sampleError(forward) <= sampleError(reversed) ? forward : reversed;
 };
 
+const pruneNodeSelection = (
+  selection: NodeSelection | null,
+  pathId: string,
+  nodes: PathNode[],
+): NodeSelection | null => {
+  if (!selection || selection.pathId !== pathId) {
+    return selection;
+  }
+  const available = new Set(nodes.map((node) => node.id));
+  const retained = selection.nodeIds.filter((id) => available.has(id));
+  return retained.length ? { pathId, nodeIds: retained } : null;
+};
+
 const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   paths: [],
   selectedPathIds: [],
+  nodeSelection: null,
   activeTool: 'pen',
   grid: {
     visible: true,
@@ -267,8 +306,9 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   },
   oxidationDefaults: createDefaultOxidation(),
   measurements: {
-    activeProbe: null,
-    history: [],
+    hoverProbe: null,
+    pinnedProbe: null,
+    dragProbe: null,
     snapping: true,
     showHeatmap: true,
   },
@@ -305,6 +345,9 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   paths: state.paths.map(clonePath),
   selectedPathIds: [...state.selectedPathIds],
   activeTool: state.activeTool,
+  nodeSelection: state.nodeSelection
+    ? { pathId: state.nodeSelection.pathId, nodeIds: [...state.nodeSelection.nodeIds] }
+    : null,
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
@@ -315,14 +358,17 @@ type WorkspaceActions = {
   updatePath: (id: string, updater: PathUpdater) => void;
   removePath: (id: string) => void;
   setSelected: (ids: string[]) => void;
+  setNodeSelection: (selection: NodeSelection | null) => void;
+  deleteSelectedNodes: () => void;
+  setNodeCurveMode: (pathId: string, nodeId: string, mode: 'line' | 'bezier') => void;
   updateGrid: (settings: Partial<WorkspaceState['grid']>) => void;
   updateMirror: (settings: Partial<WorkspaceState['mirror']>) => void;
   updateOxidationDefaults: (settings: Partial<OxidationSettings>) => void;
   updateSelectedOxidation: (settings: Partial<OxidationSettings>) => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
-  setProbe: (probe: MeasurementProbe | null) => void;
-  addProbe: (probe: MeasurementProbe) => void;
-  clearProbes: () => void;
+  setHoverProbe: (probe: MeasurementProbe | null) => void;
+  setPinnedProbe: (probe: MeasurementProbe | null) => void;
+  setDragProbe: (probe: MeasurementProbe | null) => void;
   setMeasurementSnapping: (value: boolean) => void;
   setHeatmapVisible: (value: boolean) => void;
   pushWarning: (message: string, level?: 'info' | 'warning' | 'error') => void;
@@ -416,6 +462,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         ...state,
         paths: [...state.paths, newPath],
         selectedPathIds: [newPath.meta.id],
+        nodeSelection: null,
         history,
         future: [],
         dirty: true,
@@ -451,6 +498,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         history,
         future: [],
         dirty: true,
+        nodeSelection: pruneNodeSelection(state.nodeSelection, updated.meta.id, updated.nodes),
       };
     });
   },
@@ -462,13 +510,136 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         ...state,
         paths: state.paths.filter((path) => path.meta.id !== id),
         selectedPathIds: state.selectedPathIds.filter((pid) => pid !== id),
+        nodeSelection:
+          state.nodeSelection && state.nodeSelection.pathId === id
+            ? null
+            : state.nodeSelection,
         history,
         future: [],
         dirty: true,
       };
     });
   },
-  setSelected: (ids) => set({ selectedPathIds: ids }),
+  setSelected: (ids) =>
+    set((state) => ({
+      selectedPathIds: ids,
+      nodeSelection:
+        state.nodeSelection && ids.includes(state.nodeSelection.pathId)
+          ? state.nodeSelection
+          : null,
+    })),
+  setNodeSelection: (selection) =>
+    set(() => ({
+      nodeSelection: selection
+        ? { pathId: selection.pathId, nodeIds: [...selection.nodeIds] }
+        : null,
+    })),
+  deleteSelectedNodes: () =>
+    set((state) => {
+      const selection = state.nodeSelection;
+      if (!selection) return state;
+      const pathIndex = state.paths.findIndex((path) => path.meta.id === selection.pathId);
+      if (pathIndex === -1) return state;
+      const path = state.paths[pathIndex];
+      const remainingNodes = path.nodes.filter((node) => !selection.nodeIds.includes(node.id));
+      if (remainingNodes.length === path.nodes.length) {
+        return state;
+      }
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(remainingNodes, path.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, state.mirror);
+      const finalClosed = snapped.length >= 3 && closed;
+      const updated = runGeometryPipeline({
+        ...path,
+        nodes: snapped,
+        meta: { ...path.meta, closed: finalClosed, updatedAt: Date.now() },
+      });
+      const nextPaths = [...state.paths];
+      nextPaths[pathIndex] = updated;
+      return {
+        ...state,
+        paths: nextPaths,
+        nodeSelection: null,
+        history,
+        future: [],
+        dirty: true,
+      };
+    }),
+  setNodeCurveMode: (pathId, nodeId, mode) => {
+    const mirror = get().mirror;
+    set((state) => {
+      const pathIndex = state.paths.findIndex((path) => path.meta.id === pathId);
+      if (pathIndex === -1) return state;
+      const path = state.paths[pathIndex];
+      const nodeIndex = path.nodes.findIndex((node) => node.id === nodeId);
+      if (nodeIndex === -1) return state;
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const nodes = path.nodes.map((node) => ({ ...node }));
+      const applyHandles = (fromIndex: number, toIndex: number) => {
+        const from = nodes[fromIndex];
+        const to = nodes[toIndex];
+        const vx = to.point.x - from.point.x;
+        const vy = to.point.y - from.point.y;
+        const length = Math.hypot(vx, vy) || 1;
+        const scale = length / 3;
+        const nx = vx / length;
+        const ny = vy / length;
+        nodes[fromIndex] = {
+          ...from,
+          handleOut: {
+            x: from.point.x + nx * scale,
+            y: from.point.y + ny * scale,
+          },
+        };
+        nodes[toIndex] = {
+          ...to,
+          handleIn: {
+            x: to.point.x - nx * scale,
+            y: to.point.y - ny * scale,
+          },
+        };
+      };
+      const clearHandles = (fromIndex: number, toIndex: number) => {
+        nodes[fromIndex] = { ...nodes[fromIndex], handleOut: null };
+        nodes[toIndex] = { ...nodes[toIndex], handleIn: null };
+      };
+      const prevIndex = nodeIndex === 0 ? nodes.length - 1 : nodeIndex - 1;
+      const nextIndex = (nodeIndex + 1) % nodes.length;
+      const isClosed = path.meta.closed;
+      if (mode === 'line') {
+        if (isClosed || nodeIndex > 0) {
+          clearHandles(prevIndex, nodeIndex);
+        }
+        if (isClosed || nodeIndex < nodes.length - 1) {
+          clearHandles(nodeIndex, nextIndex);
+        }
+      } else {
+        if ((isClosed || nodeIndex > 0) && nodes.length > 1) {
+          applyHandles(prevIndex, nodeIndex);
+        }
+        if ((isClosed || nodeIndex < nodes.length - 1) && nodes.length > 1) {
+          applyHandles(nodeIndex, nextIndex);
+        }
+      }
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, path.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
+      const updated = runGeometryPipeline({
+        ...path,
+        nodes: snapped,
+        meta: { ...path.meta, closed: path.meta.closed || closed, updatedAt: Date.now() },
+      });
+      const nextPaths = [...state.paths];
+      nextPaths[pathIndex] = updated;
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+        nodeSelection: pruneNodeSelection(state.nodeSelection, pathId, updated.nodes),
+      };
+    });
+  },
   updateGrid: (settings) => set((state) => ({
     grid: { ...state.grid, ...settings },
     dirty: true,
@@ -515,19 +686,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
       return { ...state, paths: nextPaths, dirty: true };
     }),
-  setProbe: (probe) => set((state) => ({
-    measurements: { ...state.measurements, activeProbe: probe },
-  })),
-  addProbe: (probe) => set((state) => ({
-    measurements: {
-      ...state.measurements,
-      history: [probe, ...state.measurements.history].slice(0, 12),
-      activeProbe: probe,
-    },
-  })),
-  clearProbes: () => set((state) => ({
-    measurements: { ...state.measurements, history: [], activeProbe: null },
-  })),
+  setHoverProbe: (probe) =>
+    set((state) => ({
+      measurements: { ...state.measurements, hoverProbe: probe },
+    })),
+  setPinnedProbe: (probe) =>
+    set((state) => ({
+      measurements: { ...state.measurements, pinnedProbe: probe },
+    })),
+  setDragProbe: (probe) =>
+    set((state) => ({
+      measurements: { ...state.measurements, dragProbe: probe },
+    })),
   setMeasurementSnapping: (value) => set((state) => ({
     measurements: { ...state.measurements, snapping: value },
   })),
@@ -605,7 +775,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ...state,
       paths: [],
       selectedPathIds: [],
-      measurements: { ...state.measurements, activeProbe: null, history: [] },
+      nodeSelection: null,
+      measurements: {
+        ...state.measurements,
+        hoverProbe: null,
+        pinnedProbe: null,
+        dragProbe: null,
+      },
       history: [],
       future: [],
       dirty: true,
@@ -623,6 +799,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         paths: previous.paths.map(clonePath),
         selectedPathIds: [...previous.selectedPathIds],
         activeTool: previous.activeTool,
+        nodeSelection: previous.nodeSelection
+          ? { pathId: previous.nodeSelection.pathId, nodeIds: [...previous.nodeSelection.nodeIds] }
+          : null,
         history: nextHistory,
         future: [...state.future, futureSnapshot].slice(-50),
         dirty: true,
@@ -641,6 +820,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         paths: snapshot.paths.map(clonePath),
         selectedPathIds: [...snapshot.selectedPathIds],
         activeTool: snapshot.activeTool,
+        nodeSelection: snapshot.nodeSelection
+          ? { pathId: snapshot.nodeSelection.pathId, nodeIds: [...snapshot.nodeSelection.nodeIds] }
+          : null,
         history: [...state.history, historySnapshot].slice(-50),
         future: remaining,
         dirty: true,
@@ -720,6 +902,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         history,
         future: [],
         dirty: true,
+        nodeSelection: pruneNodeSelection(state.nodeSelection, pathId, updated.nodes),
       };
     });
   },

@@ -2,9 +2,9 @@ import { useWorkspaceStore } from '../state';
 
 export const MeasurementPanel = () => {
   const measurements = useWorkspaceStore((state) => state.measurements);
-  const clearProbes = useWorkspaceStore((state) => state.clearProbes);
   const setHeatmapVisible = useWorkspaceStore((state) => state.setHeatmapVisible);
   const setMeasurementSnapping = useWorkspaceStore((state) => state.setMeasurementSnapping);
+  const setPinnedProbe = useWorkspaceStore((state) => state.setPinnedProbe);
 
   return (
     <div className="panel flex flex-col gap-4 p-4">
@@ -27,33 +27,38 @@ export const MeasurementPanel = () => {
           onChange={(event) => setMeasurementSnapping(event.target.checked)}
         />
       </div>
-      <div className="rounded-2xl border border-dashed border-border/70 bg-white/50 p-3">
-        {measurements.history.length === 0 ? (
-          <div className="text-xs text-muted">No measurements recorded yet.</div>
+      <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs text-muted">
+        {measurements.pinnedProbe ? (
+          <div className="flex flex-col gap-2 text-text">
+            <div className="flex items-center justify-between text-[11px] font-semibold">
+              <span>{measurements.pinnedProbe.distance.toFixed(2)} μm</span>
+              <span>{measurements.pinnedProbe.angleDeg.toFixed(1)}°</span>
+            </div>
+            <div className="flex justify-between text-[10px] uppercase tracking-widest text-muted">
+              <span>
+                A ({measurements.pinnedProbe.a.x.toFixed(0)} μm,{' '}
+                {measurements.pinnedProbe.a.y.toFixed(0)} μm)
+              </span>
+              <span>
+                B ({measurements.pinnedProbe.b.x.toFixed(0)} μm,{' '}
+                {measurements.pinnedProbe.b.y.toFixed(0)} μm)
+              </span>
+            </div>
+          </div>
         ) : (
-          <ul className="flex flex-col gap-2 text-xs text-muted">
-            {measurements.history.map((probe) => (
-              <li key={probe.id} className="flex flex-col gap-1 rounded-xl bg-accentSoft/40 px-3 py-2">
-                <div className="flex items-center justify-between text-[11px] font-semibold text-text">
-                  <span>{probe.distance.toFixed(2)} μm</span>
-                  <span>{probe.angleDeg.toFixed(1)}°</span>
-                </div>
-                <div className="flex justify-between text-[10px] uppercase tracking-widest">
-                  <span>A ({probe.a.x.toFixed(0)} μm, {probe.a.y.toFixed(0)} μm)</span>
-                  <span>B ({probe.b.x.toFixed(0)} μm, {probe.b.y.toFixed(0)} μm)</span>
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div className="text-xs">
+            Hover the outer contour to preview oxide thickness. Click to pin the current normal
+            measurement.
+          </div>
         )}
       </div>
       <button
         type="button"
         className="toolbar-button"
-        onClick={() => clearProbes()}
-        disabled={measurements.history.length === 0}
+        onClick={() => setPinnedProbe(null)}
+        disabled={!measurements.pinnedProbe}
       >
-        Clear history
+        Clear pinned measurement
       </button>
     </div>
   );

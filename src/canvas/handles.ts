@@ -1,4 +1,4 @@
-import type { PathEntity } from '../types';
+import type { NodeSelection, PathEntity } from '../types';
 import { worldToCanvas, type ViewTransform } from './viewTransform';
 
 export const drawHandles = (
@@ -6,12 +6,17 @@ export const drawHandles = (
   path: PathEntity,
   selected: boolean,
   view: ViewTransform,
+  nodeSelection: NodeSelection | null,
 ): void => {
   if (!selected) return;
   ctx.save();
   ctx.strokeStyle = 'rgba(37, 99, 235, 0.35)';
   ctx.fillStyle = '#2563eb';
   ctx.lineWidth = 1;
+  const selectedNodes =
+    nodeSelection && nodeSelection.pathId === path.meta.id
+      ? new Set(nodeSelection.nodeIds)
+      : null;
   path.nodes.forEach((node) => {
     const { point, handleIn, handleOut } = node;
     const screenPoint = worldToCanvas(point, view);
@@ -21,7 +26,7 @@ export const drawHandles = (
       ctx.moveTo(screenPoint.x, screenPoint.y);
       ctx.lineTo(screenHandleIn.x, screenHandleIn.y);
       ctx.stroke();
-      drawHandlePoint(ctx, screenHandleIn.x, screenHandleIn.y, false);
+      drawHandlePoint(ctx, screenHandleIn.x, screenHandleIn.y, false, false);
     }
     if (handleOut) {
       const screenHandleOut = worldToCanvas(handleOut, view);
@@ -29,9 +34,10 @@ export const drawHandles = (
       ctx.moveTo(screenPoint.x, screenPoint.y);
       ctx.lineTo(screenHandleOut.x, screenHandleOut.y);
       ctx.stroke();
-      drawHandlePoint(ctx, screenHandleOut.x, screenHandleOut.y, false);
+      drawHandlePoint(ctx, screenHandleOut.x, screenHandleOut.y, false, false);
     }
-    drawHandlePoint(ctx, screenPoint.x, screenPoint.y, true);
+    const isSelected = selectedNodes?.has(node.id) ?? false;
+    drawHandlePoint(ctx, screenPoint.x, screenPoint.y, true, isSelected);
   });
   ctx.restore();
 };
@@ -41,11 +47,16 @@ const drawHandlePoint = (
   x: number,
   y: number,
   anchor: boolean,
+  highlighted: boolean,
 ) => {
   ctx.beginPath();
   ctx.arc(x, y, anchor ? 5 : 4, 0, Math.PI * 2);
-  ctx.fillStyle = anchor ? '#2563eb' : '#94a3b8';
-  ctx.strokeStyle = '#ffffff';
+  if (anchor) {
+    ctx.fillStyle = highlighted ? '#1d4ed8' : '#2563eb';
+  } else {
+    ctx.fillStyle = '#94a3b8';
+  }
+  ctx.strokeStyle = highlighted ? '#1d4ed8' : '#ffffff';
   ctx.fill();
   ctx.stroke();
 };

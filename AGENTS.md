@@ -41,3 +41,10 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Pointer interactions operate in micrometre space.  Use `canvasDistanceToWorld` when comparing hit-test radii so behaviour stays consistent after future zoom tweaks.
 - Mirror preview draws reflected copies instead of duplicating nodes.  Feed any new render passes the workspace `mirror` settings so reflected geometry stays in sync.
 - The pen tool only extends from contour endpoints and honours snaps to existing nodes; re-use `penDraft.activeEnd` when adding new gestural behaviours to avoid spawning duplicate vertices.
+
+## 2024-05-30 — Node editing affordances & measurement overhaul
+
+- Workspace state now tracks `nodeSelection`; canvas hit-tests update this so the Scene panel can expose node-level toggles.  When mutating geometry arrays call `pruneNodeSelection` (or mirror its behaviour) to keep the selection in sync and avoid dangling node ids.
+- `setNodeCurveMode` promotes/demotes a node’s adjacent segments between straight and Bézier defaults.  Reuse it from UI rather than crafting handles manually—this helper preserves mirror snapping and history bookkeeping.
+- The measurement store no longer keeps a history list.  Hovering the outer contour populates `hoverProbe`, dragging creates `dragProbe`, and the last action pins to `pinnedProbe`.  All renderers read these three fields; don’t reintroduce the old history array.
+- Directional oxidation weights auto-average diagonals (NE, SE, SW, NW) from their neighbouring cardinals.  UI inputs for diagonals are read-only, and non-zero headings must surface with accented labels so users can see which directions are active at a glance.

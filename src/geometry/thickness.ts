@@ -11,13 +11,13 @@ const DIR_SEQUENCE: DirKey[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
 const DIR_ANGLES: Record<DirKey, number> = {
   E: 0,
-  NE: Math.PI / 4,
-  N: Math.PI / 2,
-  NW: (3 * Math.PI) / 4,
+  NE: -Math.PI / 4,
+  N: -Math.PI / 2,
+  NW: (-3 * Math.PI) / 4,
   W: Math.PI,
-  SW: (-3 * Math.PI) / 4,
-  S: -Math.PI / 2,
-  SE: -Math.PI / 4,
+  SW: (3 * Math.PI) / 4,
+  S: Math.PI / 2,
+  SE: Math.PI / 4,
 };
 
 const MIRROR_PAIRS: [DirKey, DirKey][] = [
@@ -43,6 +43,10 @@ const normalizeWeights = (
   for (const weight of weights) {
     lookup[weight.dir] = weight.valueUm;
   }
+  lookup.NE = (lookup.N + lookup.E) / 2;
+  lookup.SE = (lookup.S + lookup.E) / 2;
+  lookup.SW = (lookup.S + lookup.W) / 2;
+  lookup.NW = (lookup.N + lookup.W) / 2;
   if (mirrorSymmetry) {
     for (const [a, b] of MIRROR_PAIRS) {
       const average = (lookup[a] + lookup[b]) / 2;

@@ -110,10 +110,16 @@ export interface MeasurementProbe {
 }
 
 export interface MeasurementState {
-  activeProbe: MeasurementProbe | null;
-  history: MeasurementProbe[];
+  hoverProbe: MeasurementProbe | null;
+  pinnedProbe: MeasurementProbe | null;
+  dragProbe: MeasurementProbe | null;
   snapping: boolean;
   showHeatmap: boolean;
+}
+
+export interface NodeSelection {
+  pathId: string;
+  nodeIds: string[];
 }
 
 export interface PathEntity {
@@ -135,11 +141,13 @@ export interface WorkspaceSnapshot {
   paths: PathEntity[];
   selectedPathIds: string[];
   activeTool: ToolId;
+  nodeSelection: NodeSelection | null;
 }
 
 export interface WorkspaceState {
   paths: PathEntity[];
   selectedPathIds: string[];
+  nodeSelection: NodeSelection | null;
   activeTool: ToolId;
   grid: GridSettings;
   mirror: MirrorSettings;

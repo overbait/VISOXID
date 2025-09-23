@@ -81,6 +81,12 @@ export const DirectionalCompass = () => {
           const radians = (entry.angle * Math.PI) / 180;
           const offsetX = Math.cos(radians) * radius;
           const offsetY = Math.sin(radians) * radius;
+          const value = valueLookup[entry.dir];
+          const isDiagonal = entry.dir.length > 1;
+          const active = Math.abs(value) > 1e-3;
+          const labelClass = active
+            ? 'rounded-full bg-accentSoft/70 px-2 py-1 text-[10px] font-semibold uppercase text-accent shadow'
+            : 'rounded-full bg-white/80 px-2 py-1 text-[10px] font-semibold uppercase text-muted shadow';
           return (
             <label
               key={entry.dir}
@@ -89,8 +95,9 @@ export const DirectionalCompass = () => {
                 left: `calc(50% + ${offsetX}px)`,
                 top: `calc(50% + ${offsetY}px)`,
               }}
+              title={isDiagonal ? 'Averaged from adjacent cardinal weights' : undefined}
             >
-              <span className="rounded-full bg-white/80 px-2 py-1 text-[10px] font-semibold uppercase text-muted shadow">
+              <span className={labelClass}>
                 {entry.label}
               </span>
               <input
@@ -98,11 +105,16 @@ export const DirectionalCompass = () => {
                 step={0.5}
                 min={0}
                 max={10}
-                className="w-full rounded-full border border-border bg-white/95 px-2 py-1 text-center text-xs text-text shadow focus:border-accent focus:outline-none"
-                value={valueLookup[entry.dir].toFixed(1)}
+                className={`w-full rounded-full border bg-white/95 px-2 py-1 text-center text-xs text-text shadow focus:border-accent focus:outline-none ${
+                  isDiagonal ? 'border-dashed border-border/70 text-muted' : 'border-border'
+                }`}
+                value={value.toFixed(1)}
+                disabled={isDiagonal}
                 onChange={(event) => {
                   const next = Number(event.target.value);
-                  handleChange(entry.dir, Number.isNaN(next) ? 0 : next);
+                  if (!isDiagonal) {
+                    handleChange(entry.dir, Number.isNaN(next) ? 0 : next);
+                  }
                 }}
               />
             </label>

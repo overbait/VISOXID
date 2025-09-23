@@ -1,4 +1,4 @@
-import type { MeasurementState, PathEntity } from '../types';
+import type { MeasurementProbe, MeasurementState, PathEntity } from '../types';
 import { worldToCanvas, type ViewTransform } from './viewTransform';
 
 export const drawSnaps = (
@@ -22,13 +22,15 @@ export const drawSnaps = (
       ctx.fill();
     });
   });
-  if (measurements.activeProbe) {
-    const { a, b } = measurements.activeProbe;
-    const aScreen = worldToCanvas(a, view);
-    const bScreen = worldToCanvas(b, view);
+  const probeCandidates = [measurements.pinnedProbe, measurements.dragProbe].filter(
+    (probe): probe is MeasurementProbe => Boolean(probe),
+  );
+  probeCandidates.forEach((probe) => {
+    const aScreen = worldToCanvas(probe.a, view);
+    const bScreen = worldToCanvas(probe.b, view);
     drawSnap(ctx, aScreen.x, aScreen.y, true);
     drawSnap(ctx, bScreen.x, bScreen.y, true);
-  }
+  });
   ctx.restore();
 };
 

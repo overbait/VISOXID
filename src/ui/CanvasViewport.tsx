@@ -3,7 +3,7 @@ import { createRenderer } from '../canvas/renderer';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
 import { distance, toDegrees } from '../utils/math';
-import type { PathEntity, Vec2 } from '../types';
+import type { PathEntity, SamplePoint, Vec2 } from '../types';
 import {
   canvasDistanceToWorld,
   canvasToWorld,
@@ -39,15 +39,17 @@ const orderPathsBySelection = (paths: PathEntity[], selectedIds: string[]): Path
 export const CanvasViewport = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeTool = useWorkspaceStore((state) => state.activeTool);
-  const setProbe = useWorkspaceStore((state) => state.setProbe);
-  const addProbe = useWorkspaceStore((state) => state.addProbe);
+  const setHoverProbe = useWorkspaceStore((state) => state.setHoverProbe);
+  const setPinnedProbe = useWorkspaceStore((state) => state.setPinnedProbe);
+  const setDragProbe = useWorkspaceStore((state) => state.setDragProbe);
   const measurements = useWorkspaceStore((state) => state.measurements);
   const setSelected = useWorkspaceStore((state) => state.setSelected);
+  const setNodeSelection = useWorkspaceStore((state) => state.setNodeSelection);
   const updatePath = useWorkspaceStore((state) => state.updatePath);
   const addPath = useWorkspaceStore((state) => state.addPath);
   const setPathMeta = useWorkspaceStore((state) => state.setPathMeta);
   const toggleSegmentCurve = useWorkspaceStore((state) => state.toggleSegmentCurve);
-  const measureStart = useRef<Vec2 | null>(null);
+  const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
@@ -143,6 +145,40 @@ export const CanvasViewport = () => {
     return null;
   };
 
+  const updateHoverMeasurement = (position: Vec2, view: ViewTransform) => {
+    if (measureStart.current) return;
+    const state = useWorkspaceStore.getState();
+    const threshold = canvasDistanceToWorld(pathHitThresholdPx, view);
+    let closest: { sample: SamplePoint; distance: number } | null = null;
+    for (const path of state.paths) {
+      const samples = path.sampled?.samples ?? [];
+      for (const sample of samples) {
+        const dist = distance(position, sample.position);
+        if (dist <= threshold && (!closest || dist < closest.distance)) {
+          closest = { sample, distance: dist };
+        }
+      }
+    }
+    if (closest) {
+      const sample = closest.sample;
+      const inner = {
+        x: sample.position.x - sample.normal.x * sample.thickness,
+        y: sample.position.y - sample.normal.y * sample.thickness,
+      };
+      setHoverProbe({
+        id: 'hover',
+        a: sample.position,
+        b: inner,
+        distance: sample.thickness,
+        angleDeg: toDegrees(Math.atan2(inner.y - sample.position.y, inner.x - sample.position.x)),
+        thicknessA: sample.thickness,
+        thicknessB: sample.thickness,
+      });
+    } else {
+      setHoverProbe(null);
+    }
+  };
+
   const updateGeometryForDrag = (target: DragTarget, position: Vec2) => {
     updatePath(target.pathId, (nodes) =>
       nodes.map((node) => {
@@ -162,16 +198,32 @@ export const CanvasViewport = () => {
     const state = useWorkspaceStore.getState();
     const threshold = canvasDistanceToWorld(nodeHitThresholdPx, view);
     const closeThreshold = canvasDistanceToWorld(nodeHitThresholdPx + 4, view);
+    const segmentHit = hitTestSegment(position, view);
+    if (segmentHit) {
+      const newNode = {
+        id: createId('node'),
+        point: position,
+        handleIn: null,
+        handleOut: null,
+      };
+      updatePath(segmentHit.pathId, (nodes) => {
+        const next = [...nodes];
+        next.splice(segmentHit.segmentIndex + 1, 0, newNode);
+        return next;
+      });
+      setSelected([segmentHit.pathId]);
+      setNodeSelection({ pathId: segmentHit.pathId, nodeIds: [newNode.id] });
+      return;
+    }
     if (!penDraft.current) {
+      const firstNode = {
+        id: createId('node'),
+        point: position,
+        handleIn: null,
+        handleOut: null,
+      };
       const pathId = addPath(
-        [
-          {
-            id: createId('node'),
-            point: position,
-            handleIn: null,
-            handleOut: null,
-          },
-        ],
+        [firstNode],
         {
           meta: {
             id: createId('path'),
@@ -187,6 +239,7 @@ export const CanvasViewport = () => {
       );
       penDraft.current = { pathId, activeEnd: 'end' };
       setSelected([pathId]);
+      setNodeSelection({ pathId, nodeIds: [firstNode.id] });
       setCursorHint('Click to add points, double-click first point to close');
       return;
     }
@@ -215,12 +268,14 @@ export const CanvasViewport = () => {
     if (nearStart) {
       penDraft.current = { pathId: path.meta.id, activeEnd: 'start' };
       setSelected([path.meta.id]);
+      setNodeSelection({ pathId: path.meta.id, nodeIds: [firstNode.id] });
       setCursorHint('Extending from starting node');
       return;
     }
     if (nearEnd) {
       penDraft.current = { pathId: path.meta.id, activeEnd: 'end' };
       setSelected([path.meta.id]);
+      setNodeSelection({ pathId: path.meta.id, nodeIds: [lastNode.id] });
       setCursorHint('Extending from ending node');
       return;
     }
@@ -235,20 +290,21 @@ export const CanvasViewport = () => {
     } else {
       updatePath(path.meta.id, (nodes) => [...nodes, newNode]);
     }
+    setNodeSelection({ pathId: path.meta.id, nodeIds: [newNode.id] });
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
     const { world: position, view } = getPointerContext(event);
     if (activeTool === 'measure') {
-      const probe = {
-        id: createId('probe'),
+      const dragId = createId('probe');
+      measureStart.current = { origin: position, moved: false };
+      setDragProbe({
+        id: dragId,
         a: position,
         b: position,
         distance: 0,
         angleDeg: 0,
-      };
-      measureStart.current = position;
-      setProbe(probe);
+      });
       canvasRef.current?.setPointerCapture(event.pointerId);
       return;
     }
@@ -262,6 +318,7 @@ export const CanvasViewport = () => {
       if (target) {
         dragTarget.current = target;
         setSelected([target.pathId]);
+        setNodeSelection({ pathId: target.pathId, nodeIds: [target.nodeId] });
         updateGeometryForDrag(target, position);
         canvasRef.current?.setPointerCapture(event.pointerId);
         return;
@@ -279,24 +336,36 @@ export const CanvasViewport = () => {
       const pathId = hitTestPath(position, view);
       if (pathId) {
         setSelected([pathId]);
+        setNodeSelection(null);
       } else if (!event.shiftKey) {
         setSelected([]);
+        setNodeSelection(null);
       }
       return;
     }
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { world: position } = getPointerContext(event);
-    if (activeTool === 'measure' && measureStart.current && measurements.activeProbe) {
-      const dist = distance(measureStart.current, position);
-      const angle = toDegrees(Math.atan2(position.y - measureStart.current.y, position.x - measureStart.current.x));
-      setProbe({
-        ...measurements.activeProbe,
-        b: position,
-        distance: dist,
-        angleDeg: angle,
-      });
+    const { world: position, view } = getPointerContext(event);
+    if (activeTool === 'measure') {
+      if (measureStart.current && measurements.dragProbe) {
+        const dist = distance(measureStart.current.origin, position);
+        const angle = toDegrees(
+          Math.atan2(position.y - measureStart.current.origin.y, position.x - measureStart.current.origin.x),
+        );
+        const threshold = canvasDistanceToWorld(4, view);
+        if (!measureStart.current.moved && dist > threshold) {
+          measureStart.current.moved = true;
+        }
+        setDragProbe({
+          ...measurements.dragProbe,
+          b: position,
+          distance: dist,
+          angleDeg: angle,
+        });
+      } else {
+        updateHoverMeasurement(position, view);
+      }
       return;
     }
     if ((activeTool === 'select' || activeTool === 'edit') && dragTarget.current) {
@@ -305,9 +374,28 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (activeTool === 'measure' && measurements.activeProbe) {
-      addProbe(measurements.activeProbe);
+    if (activeTool === 'measure') {
+      if (measureStart.current) {
+        if (measureStart.current.moved && measurements.dragProbe) {
+          const pinnedId = createId('probe');
+          setPinnedProbe({
+            ...measurements.dragProbe,
+            id: pinnedId,
+          });
+        } else if (measurements.hoverProbe) {
+          const pinnedId = createId('probe');
+          setPinnedProbe({ ...measurements.hoverProbe, id: pinnedId });
+        } else {
+          setPinnedProbe(null);
+        }
+      }
+      setDragProbe(null);
       measureStart.current = null;
+      if (event.type === 'pointerleave') {
+        setHoverProbe(null);
+      }
+      canvasRef.current?.releasePointerCapture(event.pointerId);
+      return;
     }
     dragTarget.current = null;
     canvasRef.current?.releasePointerCapture(event.pointerId);
@@ -319,6 +407,14 @@ export const CanvasViewport = () => {
       setCursorHint(null);
     }
   }, [activeTool]);
+
+  useEffect(() => {
+    if (activeTool !== 'measure') {
+      measureStart.current = null;
+      setHoverProbe(null);
+      setDragProbe(null);
+    }
+  }, [activeTool, setDragProbe, setHoverProbe]);
 
   return (
     <div className="relative h-full min-h-[420px] w-full overflow-hidden rounded-3xl border border-border bg-surface shadow-panel">
