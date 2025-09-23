@@ -4,7 +4,7 @@ This project implements **Oxid Designer**, a Vite + React + TypeScript workbench
 
 ## Working Expectations
 
-- Keep the directional oxidation model intact.  Thickness is evaluated with a von Mises blend across the eight compass directions plus a uniform base term.  Geometry sampling, normals, smoothing, and offset visualisation flow through `workspaceStore.runGeometryPipeline()`.
+- Keep the directional oxidation model intact.  Thickness is evaluated via `evalThickness`, which blends dynamic headings with a cosine falloff and the global oxidation progress scalar.  Geometry sampling and the radial inner-offset reconstruction still flow through `workspaceStore.runGeometryPipeline()`.
 - Canvas interactions must respect the active tool in state (`select`, `pen`, `edit`, `measure`, etc.).  Selections, node manipulation, and measurement overlays are driven from `CanvasViewport` using store actions.
 - Units inside the UI are **micrometres (μm)**.  Never reintroduce raw pixel units in UI strings or overlays.
 - The oxide preview is drawn inside the canvas renderer.  Do not remove the gradient fill between the external contour and the oxidised inner contour unless a spec change requires it.
@@ -23,7 +23,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Canvas interactions now cover node dragging (select/edit), pen-based contour sketching, and measurement in μm.  Do not regress pointer-capture logic inside `CanvasViewport`—other tools depend on it.
 - Oxidation rendering draws a ribbon gradient between the base contour and the inner oxide preview.  Respect the `oxidationVisible` flag when adding new render passes.
-- Directional weights are edited through the on-canvas compass (`DirectionalCompass`).  Avoid reintroducing the old slider grid; keep this overlay responsive.
+- Directional weights are edited through the compass card above the Tool panel.  Avoid reintroducing the old slider grid or the canvas overlay; keep this card responsive on narrow viewports.
 - Scene management gained a local library persisted to `localStorage`.  Use the helpers in `workspaceStore` when adding export/import features so persistence stays consistent.
 - Default geometry comes from `createCircleNodes` (see `src/utils/presets.ts`).  Reuse that helper for any future circular presets to avoid duplicated constants.
 
@@ -47,4 +47,10 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Workspace state now tracks `nodeSelection`; canvas hit-tests update this so the Scene panel can expose node-level toggles.  When mutating geometry arrays call `pruneNodeSelection` (or mirror its behaviour) to keep the selection in sync and avoid dangling node ids.
 - `setNodeCurveMode` promotes/demotes a node’s adjacent segments between straight and Bézier defaults.  Reuse it from UI rather than crafting handles manually—this helper preserves mirror snapping and history bookkeeping.
 - The measurement store no longer keeps a history list.  Hovering the outer contour populates `hoverProbe`, dragging creates `dragProbe`, and the last action pins to `pinnedProbe`.  All renderers read these three fields; don’t reintroduce the old history array.
-- Directional oxidation weights auto-average diagonals (NE, SE, SW, NW) from their neighbouring cardinals.  UI inputs for diagonals are read-only, and non-zero headings must surface with accented labels so users can see which directions are active at a glance.
+
+## 2024-06-01 — Compass card, progressive oxidation & radial offsets
+
+- Directional weights now live in the left-side compass card (`DirectionalCompass`) instead of the canvas overlay. The card supports inserting headings by clicking inside the disc, renaming labels, adjusting μm offsets directly, and deleting a selected heading with Delete. Keep the UI responsive and respect the store’s `directionalLinking` flag when extending interactions.
+- Heading data no longer uses the fixed 8-point enum or von Mises κ. `DirectionWeight` carries an `id`, `label`, and `angleDeg`. The geometry pipeline blends weights with a cosine falloff (`evalThickness`) and honours a global oxidation progress scalar, so any new consumers must pass `progress` through.
+- Oxidation preview scaling is controlled by `workspaceStore.setOxidationProgress`. The Canvas viewport renders a bottom slider—leave it functional and ensure future changes clamp values to [0, 1] before re-running `runGeometryPipeline`.
+- Inner oxide geometry blends the contour normal with a centroid radial vector to avoid self-folding. Any further tweaks should keep the `computeCentroid`/`deriveInnerGeometry` contract intact and re-clean polygons before resampling.
