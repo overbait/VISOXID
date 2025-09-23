@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color: theme('colors.text');
+    background-color: theme('colors.background');
+    font-family: theme('fontFamily.sans');
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background text-text min-h-screen;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+
+  button {
+    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-surface rounded-2xl shadow-panel border border-border;
+  }
+
+  .toolbar-button {
+    @apply flex flex-col items-center gap-2 rounded-xl border border-transparent px-4 py-3 text-sm font-medium text-muted transition hover:text-text hover:bg-accentSoft/50 hover:border-accent/60;
+  }
+
+  .toolbar-button-active {
+    @apply text-text border-accent bg-accentSoft;
+  }
+
+  .section-title {
+    @apply text-xs uppercase tracking-[0.22em] text-muted font-semibold;
+  }
+
+  .input-label {
+    @apply text-xs font-medium text-muted;
+  }
+
+  .input-field {
+    @apply w-full rounded-xl border border-border bg-white px-3 py-2 text-sm text-text shadow-inner focus:border-accent;
+  }
+}
