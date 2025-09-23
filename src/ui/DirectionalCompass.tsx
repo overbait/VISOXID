@@ -18,6 +18,16 @@ const radius = 70;
 export const DirectionalCompass = () => {
   const defaults = useWorkspaceStore((state) => state.oxidationDefaults);
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
+  const selectedPath = useWorkspaceStore((state) => {
+    const first = state.selectedPathIds[0];
+    return first ? state.paths.find((path) => path.meta.id === first) ?? null : null;
+  });
+  const updateSelectedOxidation = useWorkspaceStore((state) => state.updateSelectedOxidation);
+
+  const active = selectedPath?.oxidation ?? defaults;
+  const activeItems = selectedPath
+    ? selectedPath.oxidation.thicknessByDirection.items
+    : defaults.thicknessByDirection.items;
 
   const valueLookup = useMemo(() => {
     const lookup: Record<DirKey, number> = {
@@ -30,15 +40,16 @@ export const DirectionalCompass = () => {
       W: 0,
       NW: 0,
     };
-    defaults.thicknessByDirection.items.forEach((item) => {
+    activeItems.forEach((item) => {
       lookup[item.dir] = item.valueUm;
     });
     return lookup;
-  }, [defaults.thicknessByDirection.items]);
+  }, [activeItems]);
 
   const handleChange = (dir: DirKey, value: number) => {
+    const clamped = Math.min(10, Math.max(0, value));
     const items = defaults.thicknessByDirection.items.map((item) =>
-      item.dir === dir ? { ...item, valueUm: value } : item,
+      item.dir === dir ? { ...item, valueUm: clamped } : item,
     );
     updateDefaults({
       thicknessByDirection: {
@@ -46,14 +57,25 @@ export const DirectionalCompass = () => {
         items,
       },
     });
+    if (selectedPath) {
+      const targetItems = selectedPath.oxidation.thicknessByDirection.items.map((item) =>
+        item.dir === dir ? { ...item, valueUm: clamped } : item,
+      );
+      updateSelectedOxidation({
+        thicknessByDirection: {
+          ...selectedPath.oxidation.thicknessByDirection,
+          items: targetItems,
+        },
+      });
+    }
   };
 
   return (
     <div className="pointer-events-none absolute left-4 top-4 select-none">
       <div className="relative flex h-40 w-40 items-center justify-center rounded-full border border-border bg-white/70 shadow-inner">
         <div className="text-center text-[11px] font-semibold text-muted">
-          Directional weights
-          <div className="text-xs font-bold text-text">{defaults.thicknessByDirection.kappa.toFixed(1)} κ</div>
+          {selectedPath ? selectedPath.meta.name : 'Directional weights'}
+          <div className="text-xs font-bold text-text">{active.thicknessByDirection.kappa.toFixed(1)} κ</div>
         </div>
         {DIRECTIONS.map((entry) => {
           const radians = (entry.angle * Math.PI) / 180;
@@ -74,6 +96,8 @@ export const DirectionalCompass = () => {
               <input
                 type="number"
                 step={0.5}
+                min={0}
+                max={10}
                 className="w-full rounded-full border border-border bg-white/95 px-2 py-1 text-center text-xs text-text shadow focus:border-accent focus:outline-none"
                 value={valueLookup[entry.dir].toFixed(1)}
                 onChange={(event) => {

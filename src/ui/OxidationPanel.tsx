@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import type { OxidationSettings } from '../types';
 import { useWorkspaceStore } from '../state';
 
 const formatValue = (value: number) => value.toFixed(1);
@@ -8,10 +9,22 @@ export const OxidationPanel = () => {
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
   const oxidationVisible = useWorkspaceStore((state) => state.oxidationVisible);
   const toggleVisible = useWorkspaceStore((state) => state.toggleOxidationVisible);
+  const selectedPath = useWorkspaceStore((state) => {
+    const first = state.selectedPathIds[0];
+    return first ? state.paths.find((path) => path.meta.id === first) ?? null : null;
+  });
+  const updateSelectedOxidation = useWorkspaceStore((state) => state.updateSelectedOxidation);
+
+  const active = selectedPath?.oxidation ?? defaults;
+
+  const applyToSelected = (settings: Partial<OxidationSettings>) => {
+    if (!selectedPath) return;
+    updateSelectedOxidation(settings);
+  };
 
   const directionValues = useMemo(
-    () => defaults.thicknessByDirection.items.map((item) => item.valueUm),
-    [defaults],
+    () => active.thicknessByDirection.items.map((item) => item.valueUm),
+    [active.thicknessByDirection.items],
   );
 
   const range = useMemo(() => {
@@ -22,11 +35,11 @@ export const OxidationPanel = () => {
 
   const preview = useMemo(
     () => [
-      { label: 'Uniform', value: `${formatValue(defaults.thicknessUniformUm)} μm` },
-      { label: 'κ', value: formatValue(defaults.thicknessByDirection.kappa) },
+      { label: 'Uniform', value: `${formatValue(active.thicknessUniformUm)} μm` },
+      { label: 'κ', value: formatValue(active.thicknessByDirection.kappa) },
       { label: 'Δ range', value: `${formatValue(range.max - range.min)} μm` },
     ],
-    [defaults, range.max, range.min],
+    [active.thicknessByDirection.kappa, active.thicknessUniformUm, range.max, range.min],
   );
 
   return (
@@ -53,41 +66,58 @@ export const OxidationPanel = () => {
         <LabeledSlider
           label="Uniform thickness"
           min={0}
-          max={50}
+          max={10}
           step={0.5}
-          value={defaults.thicknessUniformUm}
-          onChange={(value) => updateDefaults({ thicknessUniformUm: value })}
+          value={active.thicknessUniformUm}
+          onChange={(value) => {
+            const clamped = Math.min(10, Math.max(0, value));
+            updateDefaults({ thicknessUniformUm: clamped });
+            applyToSelected({ thicknessUniformUm: clamped });
+          }}
         />
         <LabeledSlider
           label="Smoothing strength"
           min={0.1}
           max={1}
           step={0.05}
-          value={defaults.smoothingStrength}
-          onChange={(value) => updateDefaults({ smoothingStrength: value })}
+          value={active.smoothingStrength}
+          onChange={(value) => {
+            updateDefaults({ smoothingStrength: value });
+            applyToSelected({ smoothingStrength: value });
+          }}
         />
         <LabeledSlider
           label="Smoothing iterations"
           min={0}
           max={5}
           step={1}
-          value={defaults.smoothingIterations}
-          onChange={(value) => updateDefaults({ smoothingIterations: Math.round(value) })}
+          value={active.smoothingIterations}
+          onChange={(value) => {
+            const rounded = Math.round(value);
+            updateDefaults({ smoothingIterations: rounded });
+            applyToSelected({ smoothingIterations: rounded });
+          }}
         />
         <LabeledSlider
           label="Directional κ"
           min={1}
           max={12}
           step={0.25}
-          value={defaults.thicknessByDirection.kappa}
-          onChange={(value) =>
+          value={active.thicknessByDirection.kappa}
+          onChange={(value) => {
             updateDefaults({
               thicknessByDirection: {
                 ...defaults.thicknessByDirection,
                 kappa: value,
               },
-            })
-          }
+            });
+            applyToSelected({
+              thicknessByDirection: {
+                ...active.thicknessByDirection,
+                kappa: value,
+              },
+            });
+          }}
         />
       </div>
       <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs text-muted">
@@ -98,8 +128,11 @@ export const OxidationPanel = () => {
         <input
           type="checkbox"
           className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
-          checked={defaults.mirrorSymmetry}
-          onChange={(event) => updateDefaults({ mirrorSymmetry: event.target.checked })}
+          checked={active.mirrorSymmetry}
+          onChange={(event) => {
+            updateDefaults({ mirrorSymmetry: event.target.checked });
+            applyToSelected({ mirrorSymmetry: event.target.checked });
+          }}
         />
         Mirror symmetry
       </label>

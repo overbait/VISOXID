@@ -75,7 +75,7 @@ export const ScenePanel = () => {
           type="button"
           className="toolbar-button"
           onClick={() =>
-            addPath(createCircleNodes({ x: 360, y: 320 }, 180), {
+            addPath(createCircleNodes({ x: 25, y: 25 }, 18), {
               meta: {
                 id: createId('path'),
                 name: 'Reference circle',

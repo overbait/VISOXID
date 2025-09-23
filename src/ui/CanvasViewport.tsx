@@ -40,6 +40,7 @@ export const CanvasViewport = () => {
   const updatePath = useWorkspaceStore((state) => state.updatePath);
   const addPath = useWorkspaceStore((state) => state.addPath);
   const setPathMeta = useWorkspaceStore((state) => state.setPathMeta);
+  const toggleSegmentCurve = useWorkspaceStore((state) => state.toggleSegmentCurve);
   const measureStart = useRef<Vec2 | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const penDraft = useRef<{ pathId: string } | null>(null);
@@ -95,6 +96,25 @@ export const CanvasViewport = () => {
           if (pointSegmentDistance(position, path.nodes[i - 1].point, path.nodes[i].point) <= pathHitThreshold) {
             return path.meta.id;
           }
+        }
+      }
+    }
+    return null;
+  };
+
+  const hitTestSegment = (
+    position: Vec2,
+  ): { pathId: string; segmentIndex: number } | null => {
+    const state = useWorkspaceStore.getState();
+    for (const path of state.paths) {
+      const { nodes } = path;
+      const totalSegments = path.meta.closed ? nodes.length : nodes.length - 1;
+      if (totalSegments < 1) continue;
+      for (let i = 0; i < totalSegments; i += 1) {
+        const a = nodes[i].point;
+        const b = nodes[(i + 1) % nodes.length].point;
+        if (pointSegmentDistance(position, a, b) <= pathHitThreshold) {
+          return { pathId: path.meta.id, segmentIndex: i };
         }
       }
     }
@@ -204,6 +224,18 @@ export const CanvasViewport = () => {
         updateGeometryForDrag(target, position);
         canvasRef.current?.setPointerCapture(event.pointerId);
         return;
+      }
+      if (activeTool === 'edit') {
+        const segment = hitTestSegment(position);
+        if (segment && event.detail >= 2) {
+          toggleSegmentCurve(segment.pathId, segment.segmentIndex);
+          setSelected([segment.pathId]);
+          return;
+        }
+        if (segment) {
+          setSelected([segment.pathId]);
+          return;
+        }
       }
       const pathId = hitTestPath(position);
       if (pathId) {

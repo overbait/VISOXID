@@ -6,6 +6,8 @@ import type {
   PathEntity,
   PathMeta,
   PathNode,
+  SamplePoint,
+  Vec2,
   StoredShape,
   ToolId,
   WorkspaceSnapshot,
@@ -15,12 +17,22 @@ import { createId } from '../utils/ids';
 import {
   adaptiveSamplePath,
   accumulateLength,
+  cleanAndSimplifyPolygons,
   evalThickness,
+  polygonArea,
   recomputeNormals,
+  resampleClosedPolygon,
   smoothSamples,
 } from '../geometry';
+import { clamp, distance } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
+
+const MAX_THICKNESS_UM = 10;
+const ENDPOINT_MERGE_THRESHOLD = 4;
+const MIRROR_SNAP_THRESHOLD = 1.5;
+
+const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
 
 const loadLibrary = (): StoredShape[] => {
   if (typeof window === 'undefined') return [];
@@ -90,7 +102,7 @@ const mergeOxidationSettings = (
 ): OxidationSettings => {
   const merged = cloneOxidationSettings(base);
   if (patch.thicknessUniformUm !== undefined) {
-    merged.thicknessUniformUm = patch.thicknessUniformUm;
+    merged.thicknessUniformUm = clampThickness(patch.thicknessUniformUm);
   }
   if (patch.smoothingIterations !== undefined) {
     merged.smoothingIterations = patch.smoothingIterations;
@@ -109,11 +121,91 @@ const mergeOxidationSettings = (
     merged.thicknessByDirection = {
       kappa: kappa ?? merged.thicknessByDirection.kappa,
       items: items
-        ? items.map((item) => ({ ...item }))
-        : merged.thicknessByDirection.items,
+        ? items.map((item) => ({ ...item, valueUm: clampThickness(item.valueUm) }))
+        : merged.thicknessByDirection.items.map((item) => ({
+            ...item,
+            valueUm: clampThickness(item.valueUm),
+          })),
     };
   }
+  merged.thicknessUniformUm = clampThickness(merged.thicknessUniformUm);
+  merged.thicknessByDirection.items = merged.thicknessByDirection.items.map((item) => ({
+    ...item,
+    valueUm: clampThickness(item.valueUm),
+  }));
   return merged;
+};
+
+const shiftNode = (node: PathNode, x: number, y: number): PathNode => {
+  const dx = x - node.point.x;
+  const dy = y - node.point.y;
+  return {
+    ...node,
+    point: { x, y },
+    handleIn: node.handleIn
+      ? { x: node.handleIn.x + dx, y: node.handleIn.y + dy }
+      : node.handleIn ?? null,
+    handleOut: node.handleOut
+      ? { x: node.handleOut.x + dx, y: node.handleOut.y + dy }
+      : node.handleOut ?? null,
+  };
+};
+
+const mergeEndpointsIfClose = (
+  nodes: PathNode[],
+  alreadyClosed: boolean,
+): { nodes: PathNode[]; closed: boolean } => {
+  if (nodes.length < 2 || alreadyClosed) {
+    return { nodes, closed: alreadyClosed };
+  }
+  const first = nodes[0];
+  const lastIndex = nodes.length - 1;
+  const last = nodes[lastIndex];
+  if (distance(first.point, last.point) > ENDPOINT_MERGE_THRESHOLD) {
+    return { nodes, closed: false };
+  }
+  const mergedX = (first.point.x + last.point.x) / 2;
+  const mergedY = (first.point.y + last.point.y) / 2;
+  const mergedNodes = [...nodes];
+  mergedNodes[0] = shiftNode(first, mergedX, mergedY);
+  mergedNodes[lastIndex] = shiftNode(last, mergedX, mergedY);
+  return { nodes: mergedNodes, closed: true };
+};
+
+const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']): PathNode[] => {
+  if (!mirror.enabled) return nodes;
+  return nodes.map((node) => {
+    let next = node;
+    if ((mirror.axis === 'y' || mirror.axis === 'xy') && Math.abs(node.point.x - mirror.origin.x) <= MIRROR_SNAP_THRESHOLD) {
+      next = shiftNode(next, mirror.origin.x, next.point.y);
+    }
+    if ((mirror.axis === 'x' || mirror.axis === 'xy') && Math.abs(node.point.y - mirror.origin.y) <= MIRROR_SNAP_THRESHOLD) {
+      next = shiftNode(next, next.point.x, mirror.origin.y);
+    }
+    return next;
+  });
+};
+
+const deriveInnerGeometry = (
+  samples: SamplePoint[],
+  closed: boolean,
+): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
+  const inner = samples.map((sample) => ({
+    x: sample.position.x - sample.normal.x * sample.thickness,
+    y: sample.position.y - sample.normal.y * sample.thickness,
+  }));
+  if (!closed || inner.length < 3) {
+    return { innerSamples: inner, polygons: closed ? [inner] : [] };
+  }
+  const polygons = cleanAndSimplifyPolygons(inner);
+  if (!polygons.length) {
+    return { innerSamples: inner, polygons: [] };
+  }
+  const primary = polygons.reduce((largest, poly) =>
+    Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
+  polygons[0]);
+  const resampled = resampleClosedPolygon(primary, samples.length);
+  return { innerSamples: resampled.length ? resampled : inner, polygons };
 };
 
 const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
@@ -123,13 +215,13 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   grid: {
     visible: true,
     snapToGrid: false,
-    spacing: 24,
-    subdivisions: 4,
+    spacing: 5,
+    subdivisions: 5,
   },
   mirror: {
     enabled: false,
     axis: 'y',
-    origin: { x: 0, y: 0 },
+    origin: { x: 25, y: 25 },
     livePreview: true,
   },
   oxidationDefaults: createDefaultOxidation(),
@@ -185,6 +277,7 @@ type WorkspaceActions = {
   updateGrid: (settings: Partial<WorkspaceState['grid']>) => void;
   updateMirror: (settings: Partial<WorkspaceState['mirror']>) => void;
   updateOxidationDefaults: (settings: Partial<OxidationSettings>) => void;
+  updateSelectedOxidation: (settings: Partial<OxidationSettings>) => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
   setProbe: (probe: MeasurementProbe | null) => void;
   addProbe: (probe: MeasurementProbe) => void;
@@ -204,6 +297,7 @@ type WorkspaceActions = {
   redo: () => void;
   importState: (state: WorkspaceState) => void;
   reset: () => void;
+  toggleSegmentCurve: (pathId: string, segmentIndex: number) => void;
 };
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -228,6 +322,7 @@ const runGeometryPipeline = (path: PathEntity): PathEntity => {
     kappa: path.oxidation.thicknessByDirection.kappa,
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
   });
+  const { innerSamples, polygons } = deriveInnerGeometry(withThickness, path.meta.closed);
   const length = accumulateLength(withThickness);
   return {
     ...path,
@@ -235,6 +330,8 @@ const runGeometryPipeline = (path: PathEntity): PathEntity => {
       id: path.meta.id,
       samples: withThickness,
       length,
+      innerSamples,
+      innerPolygons: polygons,
     },
   };
 };
@@ -245,6 +342,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   ...createEmptyState(initialLibrary),
   setActiveTool: (tool) => set({ activeTool: tool }),
   addPath: (nodes, overrides) => {
+    const mirror = get().mirror;
     const id = overrides?.meta?.id ?? createId('path');
     set((state) => {
       const history = [...state.history, captureSnapshot(state)].slice(-50);
@@ -258,9 +356,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+      const clonedNodes = nodes.map((node) => ({ ...node }));
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(
+        clonedNodes,
+        meta.closed,
+      );
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
+      const finalMeta = { ...meta, closed: meta.closed || closed };
       const newPath: PathEntity = runGeometryPipeline({
-        meta,
-        nodes,
+        meta: finalMeta,
+        nodes: snapped,
         oxidation: overrides?.oxidation
           ? cloneOxidationSettings(overrides.oxidation)
           : cloneOxidationSettings(state.oxidationDefaults),
@@ -279,16 +384,23 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     return id;
   },
   updatePath: (id, updater) => {
+    const mirror = get().mirror;
     set((state) => {
       const index = state.paths.findIndex((path) => path.meta.id === id);
       if (index === -1) return state;
       const history = [...state.history, captureSnapshot(state)].slice(-50);
       const target = state.paths[index];
       const nodes = updater(target.nodes.map((node) => ({ ...node })));
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, target.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
       const updated = runGeometryPipeline({
         ...target,
-        nodes,
-        meta: { ...target.meta, updatedAt: Date.now() },
+        nodes: snapped,
+        meta: {
+          ...target.meta,
+          closed: target.meta.closed || closed,
+          updatedAt: Date.now(),
+        },
       });
       const nextPaths = [...state.paths];
       nextPaths[index] = updated;
@@ -329,6 +441,28 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       oxidationDefaults: mergeOxidationSettings(state.oxidationDefaults, settings),
       dirty: true,
     })),
+  updateSelectedOxidation: (settings) =>
+    set((state) => {
+      if (!state.selectedPathIds.length) return state;
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const selected = new Set(state.selectedPathIds);
+      const nextPaths = state.paths.map((path) => {
+        if (!selected.has(path.meta.id)) return path;
+        const oxidation = mergeOxidationSettings(path.oxidation, settings);
+        return runGeometryPipeline({
+          ...path,
+          oxidation,
+          meta: { ...path.meta, updatedAt: Date.now() },
+        });
+      });
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+      };
+    }),
   setPathMeta: (id, patch) =>
     set((state) => {
       const index = state.paths.findIndex((path) => path.meta.id === id);
@@ -488,4 +622,64 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ...createEmptyState(state.library.map(cloneStoredShape)),
       library: state.library.map(cloneStoredShape),
     })),
+  toggleSegmentCurve: (pathId, segmentIndex) => {
+    const mirror = get().mirror;
+    set((state) => {
+      const pathIndex = state.paths.findIndex((path) => path.meta.id === pathId);
+      if (pathIndex === -1) return state;
+      const path = state.paths[pathIndex];
+      const totalSegments = path.meta.closed ? path.nodes.length : path.nodes.length - 1;
+      if (segmentIndex < 0 || segmentIndex >= totalSegments) {
+        return state;
+      }
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const nodes = path.nodes.map((node) => ({ ...node }));
+      const currentIndex = segmentIndex;
+      const nextIndex = (segmentIndex + 1) % nodes.length;
+      const current = nodes[currentIndex];
+      const next = nodes[nextIndex];
+      const hasHandles = Boolean(current.handleOut) || Boolean(next.handleIn);
+      if (hasHandles) {
+        nodes[currentIndex] = { ...current, handleOut: null };
+        nodes[nextIndex] = { ...next, handleIn: null };
+      } else {
+        const vx = next.point.x - current.point.x;
+        const vy = next.point.y - current.point.y;
+        const length = Math.hypot(vx, vy) || 1;
+        const scale = length / 3;
+        const nx = vx / length;
+        const ny = vy / length;
+        nodes[currentIndex] = {
+          ...current,
+          handleOut: {
+            x: current.point.x + nx * scale,
+            y: current.point.y + ny * scale,
+          },
+        };
+        nodes[nextIndex] = {
+          ...next,
+          handleIn: {
+            x: next.point.x - nx * scale,
+            y: next.point.y - ny * scale,
+          },
+        };
+      }
+      const { nodes: mergedNodes } = mergeEndpointsIfClose(nodes, path.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
+      const updated = runGeometryPipeline({
+        ...path,
+        nodes: snapped,
+        meta: { ...path.meta, updatedAt: Date.now() },
+      });
+      const nextPaths = [...state.paths];
+      nextPaths[pathIndex] = updated;
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+      };
+    });
+  },
 }));

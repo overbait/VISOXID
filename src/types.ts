@@ -57,6 +57,8 @@ export interface SampledPath {
   id: string;
   samples: SamplePoint[];
   length: number;
+  innerSamples?: Vec2[];
+  innerPolygons?: Vec2[][];
 }
 
 export interface OxidationSettings {

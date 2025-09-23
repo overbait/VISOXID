@@ -47,11 +47,13 @@ export const drawContours = (
   );
   ctx.restore();
   if (!showOxide || !path.sampled || path.sampled.samples.length < 2) return;
-  const inner = path.sampled.samples.map((sample) => ({
+  const outer = path.sampled.samples.map((sample) => sample.position);
+  const fallbackInner = path.sampled.samples.map((sample) => ({
     x: sample.position.x - sample.normal.x * sample.thickness,
     y: sample.position.y - sample.normal.y * sample.thickness,
   }));
-  const outer = path.sampled.samples.map((sample) => sample.position);
+  const innerSource = path.sampled.innerSamples ?? fallbackInner;
+  const inner = innerSource.length === outer.length ? innerSource : fallbackInner;
   ctx.save();
   for (let i = 1; i < outer.length; i += 1) {
     fillRibbon(ctx, outer[i - 1], outer[i], inner[i], inner[i - 1]);
