@@ -19,6 +19,7 @@ import {
   adaptiveSamplePath,
   accumulateLength,
   cleanAndSimplifyPolygons,
+  computeOffset,
   evalThickness,
   polygonArea,
   recomputeNormals,
@@ -242,78 +243,92 @@ const deriveInnerGeometry = (
   closed: boolean,
   centroid: Vec2,
 ): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
-  const radialBias = 0.7;
-  const inner = samples.map((sample) => {
-    const radial = {
+  if (!samples.length) {
+    return { innerSamples: [], polygons: [] };
+  }
+
+  const fallbackDirection = (sample: SamplePoint): Vec2 => {
+    const normalDir = normalize(sample.normal);
+    if (normalDir.x !== 0 || normalDir.y !== 0) {
+      return normalDir;
+    }
+    const radial = normalize({
       x: sample.position.x - centroid.x,
       y: sample.position.y - centroid.y,
-    };
-    const radialDir = normalize(radial);
-    const normalDir = normalize(sample.normal);
-    const blended = normalize({
-      x: radialDir.x * radialBias + normalDir.x * (1 - radialBias),
-      y: radialDir.y * radialBias + normalDir.y * (1 - radialBias),
     });
-    const direction = blended.x === 0 && blended.y === 0 ? normalDir : blended;
+    if (radial.x !== 0 || radial.y !== 0) {
+      return radial;
+    }
+    return { x: 0, y: -1 };
+  };
+
+  const thicknessValues = samples.map((sample) => sample.thickness);
+  const baselineThickness = Math.max(Math.min(...thicknessValues), 0);
+
+  const initialBaseline = samples.map((sample) => {
+    const direction = fallbackDirection(sample);
     return {
-      x: sample.position.x - direction.x * sample.thickness,
-      y: sample.position.y - direction.y * sample.thickness,
+      x: sample.position.x - direction.x * baselineThickness,
+      y: sample.position.y - direction.y * baselineThickness,
     };
   });
-  if (!closed || inner.length < 3) {
-    return { innerSamples: inner, polygons: closed ? [inner] : [] };
+
+  let baselineSamples = initialBaseline;
+  if (closed && baselineThickness > 0) {
+    const outerPolygon = samples.map((sample) => sample.position);
+    const offsets = computeOffset(outerPolygon, {
+      delta: -baselineThickness,
+      joinStyle: 'round',
+      miterLimit: 6,
+    });
+    if (offsets.length) {
+      const primaryBaseline = offsets.reduce((largest, poly) =>
+        Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
+      offsets[0]);
+      if (primaryBaseline.length >= 3) {
+        const resampledBaseline = resampleClosedPolygon(primaryBaseline, samples.length);
+        if (resampledBaseline.length === samples.length) {
+          baselineSamples = resampledBaseline;
+        } else if (resampledBaseline.length) {
+          baselineSamples = resampledBaseline;
+        }
+      }
+    }
   }
-  const polygons = cleanAndSimplifyPolygons(inner);
+
+  const innerCandidates = samples.map((sample, index) => {
+    const base = baselineSamples[index % baselineSamples.length] ?? baselineSamples[0] ?? sample.position;
+    const outward = normalize({
+      x: sample.position.x - base.x,
+      y: sample.position.y - base.y,
+    });
+    const direction = outward.x === 0 && outward.y === 0 ? fallbackDirection(sample) : outward;
+    const extra = Math.max(0, sample.thickness - baselineThickness);
+    return {
+      x: base.x - direction.x * extra,
+      y: base.y - direction.y * extra,
+    };
+  });
+
+  if (!closed) {
+    return { innerSamples: innerCandidates, polygons: [] };
+  }
+
+  if (innerCandidates.length < 3) {
+    return { innerSamples: innerCandidates, polygons: [] };
+  }
+
+  const polygons = cleanAndSimplifyPolygons(innerCandidates);
   if (!polygons.length) {
-    return { innerSamples: inner, polygons: [] };
+    return { innerSamples: innerCandidates, polygons: [] };
   }
   const primary = polygons.reduce((largest, poly) =>
     Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
   polygons[0]);
   const resampled = resampleClosedPolygon(primary, samples.length);
-  const aligned = alignClosedSequence(resampled, inner);
-  return { innerSamples: aligned.length ? aligned : inner, polygons };
+  return { innerSamples: resampled.length ? resampled : innerCandidates, polygons };
 };
 
-const alignClosedSequence = (source: Vec2[], target: Vec2[]): Vec2[] => {
-  if (!source.length || source.length !== target.length) {
-    return source;
-  }
-  const length = source.length;
-  const findBestOffset = (points: Vec2[]): number => {
-    let bestIndex = 0;
-    let bestDist = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < length; i += 1) {
-      const dx = points[i].x - target[0].x;
-      const dy = points[i].y - target[0].y;
-      const distSq = dx * dx + dy * dy;
-      if (distSq < bestDist) {
-        bestDist = distSq;
-        bestIndex = i;
-      }
-    }
-    return bestIndex;
-  };
-  const rotate = (points: Vec2[], offset: number): Vec2[] =>
-    points.map((_, idx) => points[(idx + offset) % length]);
-  const forwardOffset = findBestOffset(source);
-  const forward = rotate(source, forwardOffset);
-  const reversedSource = [...source].reverse();
-  const reverseOffset = findBestOffset(reversedSource);
-  const reversed = rotate(reversedSource, reverseOffset);
-  const sampleError = (points: Vec2[]): number => {
-    const samples = Math.min(points.length, 24);
-    let total = 0;
-    for (let i = 0; i < samples; i += 1) {
-      const idx = Math.floor((i / samples) * points.length);
-      const dx = points[idx].x - target[idx].x;
-      const dy = points[idx].y - target[idx].y;
-      total += dx * dx + dy * dy;
-    }
-    return total;
-  };
-  return sampleError(forward) <= sampleError(reversed) ? forward : reversed;
-};
 
 const pruneNodeSelection = (
   selection: NodeSelection | null,

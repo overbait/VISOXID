@@ -4,7 +4,7 @@ This project implements **Oxid Designer**, a Vite + React + TypeScript workbench
 
 ## Working Expectations
 
-- Keep the directional oxidation model intact.  Thickness is evaluated via `evalThickness`, which blends dynamic headings with a cosine falloff and the global oxidation progress scalar.  Geometry sampling and the radial inner-offset reconstruction still flow through `workspaceStore.runGeometryPipeline()`.
+- The oxidation pipeline now derives the inner contour by first carving a uniform baseline offset with Clipper and then layering per-heading expansions along the outward normals.  Preserve this sequence inside `runGeometryPipeline()` so the oxide shell always honours the configured minimum thickness.
 - Canvas interactions must respect the active tool in state (`select`, `pen`, `edit`, `measure`, etc.).  Selections, node manipulation, and measurement overlays are driven from `CanvasViewport` using store actions.
 - Units inside the UI are **micrometres (μm)**.  Never reintroduce raw pixel units in UI strings or overlays.
 - The oxide preview is drawn inside the canvas renderer.  Do not remove the gradient fill between the external contour and the oxidised inner contour unless a spec change requires it.
@@ -48,9 +48,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `setNodeCurveMode` promotes/demotes a node’s adjacent segments between straight and Bézier defaults.  Reuse it from UI rather than crafting handles manually—this helper preserves mirror snapping and history bookkeeping.
 - The measurement store no longer keeps a history list.  Hovering the outer contour populates `hoverProbe`, dragging creates `dragProbe`, and the last action pins to `pinnedProbe`.  All renderers read these three fields; don’t reintroduce the old history array.
 
-## 2024-06-01 — Compass card, progressive oxidation & radial offsets
+## 2024-06-01 — Compass spokes, progressive oxidation & baseline offsets
 
-- Directional weights now live in the left-side compass card (`DirectionalCompass`) instead of the canvas overlay. The card supports inserting headings by clicking inside the disc, renaming labels, adjusting μm offsets directly, and deleting a selected heading with Delete. Keep the UI responsive and respect the store’s `directionalLinking` flag when extending interactions.
-- Heading data no longer uses the fixed 8-point enum or von Mises κ. `DirectionWeight` carries an `id`, `label`, and `angleDeg`. The geometry pipeline blends weights with a cosine falloff (`evalThickness`) and honours a global oxidation progress scalar, so any new consumers must pass `progress` through.
+- Directional weights surface as coloured spokes in the compass card (`DirectionalCompass`). Each spoke length & hue encode the μm value; clicking opens a nearby popover with ± nudges and a numeric input. The outer plus button toggles add mode—while active, click the rim to insert a new heading. Keep Delete support for the focused spoke and honour the `directionalLinking` flag when propagating edits.
+- Heading data still travels through `DirectionWeight` objects (`id`, `label`, `angleDeg`, `valueUm`). `evalThickness` continues to blend headings with a cosine falloff and the global oxidation progress scalar—pass `progress` everywhere thickness is evaluated so the card, slider, and preview stay synchronised.
 - Oxidation preview scaling is controlled by `workspaceStore.setOxidationProgress`. The Canvas viewport renders a bottom slider—leave it functional and ensure future changes clamp values to [0, 1] before re-running `runGeometryPipeline`.
-- Inner oxide geometry blends the contour normal with a centroid radial vector to avoid self-folding. Any further tweaks should keep the `computeCentroid`/`deriveInnerGeometry` contract intact and re-clean polygons before resampling.
+- Inner oxide geometry now combines a Clipper-derived uniform inset with extra directional travel along each sample’s outward normal. Preserve this baseline-before-extras ordering when adjusting the pipeline and continue to sanitise the resulting polygons with `cleanAndSimplifyPolygons`.
