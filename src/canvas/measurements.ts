@@ -19,7 +19,7 @@ export const drawMeasurements = (
     ctx.stroke();
     const midX = (probe.a.x + probe.b.x) / 2;
     const midY = (probe.a.y + probe.b.y) / 2;
-    const distanceLabel = `${probe.distance.toFixed(2)} px`;
+    const distanceLabel = `${probe.distance.toFixed(2)} μm`;
     const angleLabel = `${toDegrees(Math.atan2(probe.b.y - probe.a.y, probe.b.x - probe.a.x)).toFixed(1)}°`;
     drawLabel(ctx, midX, midY, `${distanceLabel} • ${angleLabel}`);
   });

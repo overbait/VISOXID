@@ -74,6 +74,15 @@ export interface OxidationPreset {
   settings: OxidationSettings;
 }
 
+export interface StoredShape {
+  id: string;
+  name: string;
+  nodes: PathNode[];
+  oxidation: OxidationSettings;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface GridSettings {
   visible: boolean;
   snapToGrid: boolean;
@@ -138,6 +147,9 @@ export interface WorkspaceState {
   history: WorkspaceSnapshot[];
   future: WorkspaceSnapshot[];
   dirty: boolean;
+  oxidationVisible: boolean;
+  bootstrapped: boolean;
+  library: StoredShape[];
 }
 
 export interface ExportedProject {

@@ -1,25 +1,13 @@
 import { useMemo } from 'react';
-import type { DirKey } from '../types';
 import { useWorkspaceStore } from '../state';
 
 const formatValue = (value: number) => value.toFixed(1);
 
-const DIRECTION_LABELS: Record<DirKey, string> = {
-  N: 'North',
-  NE: 'North-East',
-  E: 'East',
-  SE: 'South-East',
-  S: 'South',
-  SW: 'South-West',
-  W: 'West',
-  NW: 'North-West',
-};
-
-const DIRECTION_ORDER: DirKey[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-
 export const OxidationPanel = () => {
   const defaults = useWorkspaceStore((state) => state.oxidationDefaults);
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
+  const oxidationVisible = useWorkspaceStore((state) => state.oxidationVisible);
+  const toggleVisible = useWorkspaceStore((state) => state.toggleOxidationVisible);
 
   const directionValues = useMemo(
     () => defaults.thicknessByDirection.items.map((item) => item.valueUm),
@@ -41,21 +29,18 @@ export const OxidationPanel = () => {
     [defaults, range.max, range.min],
   );
 
-  const updateDirection = (dir: DirKey, value: number) => {
-    const items = defaults.thicknessByDirection.items.map((item) =>
-      item.dir === dir ? { ...item, valueUm: value } : item,
-    );
-    updateDefaults({
-      thicknessByDirection: {
-        ...defaults.thicknessByDirection,
-        items,
-      },
-    });
-  };
-
   return (
     <div className="panel flex flex-col gap-4 p-4">
       <div className="section-title">Oxidation</div>
+      <label className="flex items-center justify-between text-xs font-medium text-muted">
+        <span>Show oxide preview</span>
+        <input
+          type="checkbox"
+          className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+          checked={oxidationVisible}
+          onChange={(event) => toggleVisible(event.target.checked)}
+        />
+      </label>
       <div className="grid grid-cols-3 gap-3 text-xs text-muted">
         {preview.map((item) => (
           <div key={item.label} className="rounded-xl bg-accentSoft/60 px-3 py-2 text-center text-[11px]">
@@ -105,22 +90,9 @@ export const OxidationPanel = () => {
           }
         />
       </div>
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        {DIRECTION_ORDER.map((dir) => {
-          const current = defaults.thicknessByDirection.items.find((item) => item.dir === dir);
-          const value = current?.valueUm ?? 0;
-          return (
-            <LabeledSlider
-              key={dir}
-              label={`${DIRECTION_LABELS[dir]} (${dir})`}
-              min={-25}
-              max={25}
-              step={0.5}
-              value={value}
-              onChange={(v) => updateDirection(dir, v)}
-            />
-          );
-        })}
+      <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs text-muted">
+        Directional μm offsets can be edited via the circular compass overlay on the canvas. Tap a cardinal label there to input
+        values directly.
       </div>
       <label className="flex items-center gap-2 text-xs font-medium text-muted">
         <input

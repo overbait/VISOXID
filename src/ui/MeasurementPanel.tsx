@@ -35,12 +35,12 @@ export const MeasurementPanel = () => {
             {measurements.history.map((probe) => (
               <li key={probe.id} className="flex flex-col gap-1 rounded-xl bg-accentSoft/40 px-3 py-2">
                 <div className="flex items-center justify-between text-[11px] font-semibold text-text">
-                  <span>{probe.distance.toFixed(2)} px</span>
+                  <span>{probe.distance.toFixed(2)} μm</span>
                   <span>{probe.angleDeg.toFixed(1)}°</span>
                 </div>
                 <div className="flex justify-between text-[10px] uppercase tracking-widest">
-                  <span>A ({probe.a.x.toFixed(0)}, {probe.a.y.toFixed(0)})</span>
-                  <span>B ({probe.b.x.toFixed(0)}, {probe.b.y.toFixed(0)})</span>
+                  <span>A ({probe.a.x.toFixed(0)} μm, {probe.a.y.toFixed(0)} μm)</span>
+                  <span>B ({probe.b.x.toFixed(0)} μm, {probe.b.y.toFixed(0)} μm)</span>
                 </div>
               </li>
             ))}

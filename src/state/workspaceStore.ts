@@ -4,7 +4,9 @@ import type {
   MeasurementProbe,
   OxidationSettings,
   PathEntity,
+  PathMeta,
   PathNode,
+  StoredShape,
   ToolId,
   WorkspaceSnapshot,
   WorkspaceState,
@@ -17,6 +19,39 @@ import {
   recomputeNormals,
   smoothSamples,
 } from '../geometry';
+
+const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
+
+const loadLibrary = (): StoredShape[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(LIBRARY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as StoredShape[];
+    return parsed.map((shape) => ({
+      ...shape,
+      nodes: shape.nodes.map((node) => ({ ...node })),
+      oxidation: cloneOxidationSettings(shape.oxidation),
+    }));
+  } catch (error) {
+    console.warn('Failed to load stored shape library', error);
+    return [];
+  }
+};
+
+const persistLibrary = (library: StoredShape[]): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    const serialisable = library.map((shape) => ({
+      ...shape,
+      nodes: shape.nodes.map((node) => ({ ...node })),
+      oxidation: cloneOxidationSettings(shape.oxidation),
+    }));
+    window.localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(serialisable));
+  } catch (error) {
+    console.warn('Failed to persist shape library', error);
+  }
+};
 
 const createDefaultDirectionWeights = (): DirectionWeight[] => [
   { dir: 'N', valueUm: 0 },
@@ -81,7 +116,7 @@ const mergeOxidationSettings = (
   return merged;
 };
 
-const createEmptyState = (): WorkspaceState => ({
+const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   paths: [],
   selectedPathIds: [],
   activeTool: 'pen',
@@ -108,6 +143,9 @@ const createEmptyState = (): WorkspaceState => ({
   history: [],
   future: [],
   dirty: false,
+  oxidationVisible: true,
+  bootstrapped: false,
+  library,
 });
 
 const clonePath = (path: PathEntity): PathEntity => ({
@@ -121,6 +159,12 @@ const clonePath = (path: PathEntity): PathEntity => ({
     : undefined,
   oxidation: cloneOxidationSettings(path.oxidation),
   meta: { ...path.meta },
+});
+
+const cloneStoredShape = (shape: StoredShape): StoredShape => ({
+  ...shape,
+  nodes: shape.nodes.map((node) => ({ ...node })),
+  oxidation: cloneOxidationSettings(shape.oxidation),
 });
 
 const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
@@ -141,6 +185,7 @@ type WorkspaceActions = {
   updateGrid: (settings: Partial<WorkspaceState['grid']>) => void;
   updateMirror: (settings: Partial<WorkspaceState['mirror']>) => void;
   updateOxidationDefaults: (settings: Partial<OxidationSettings>) => void;
+  setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
   setProbe: (probe: MeasurementProbe | null) => void;
   addProbe: (probe: MeasurementProbe) => void;
   clearProbes: () => void;
@@ -148,6 +193,13 @@ type WorkspaceActions = {
   setHeatmapVisible: (value: boolean) => void;
   pushWarning: (message: string, level?: 'info' | 'warning' | 'error') => void;
   dismissWarning: (id: string) => void;
+  toggleOxidationVisible: (value: boolean) => void;
+  markBootstrapped: () => void;
+  saveShapeToLibrary: (pathId: string, name: string) => void;
+  removeShapeFromLibrary: (shapeId: string) => void;
+  renameShapeInLibrary: (shapeId: string, name: string) => void;
+  loadShapeFromLibrary: (shapeId: string) => void;
+  resetScene: () => void;
   undo: () => void;
   redo: () => void;
   importState: (state: WorkspaceState) => void;
@@ -187,8 +239,10 @@ const runGeometryPipeline = (path: PathEntity): PathEntity => {
   };
 };
 
+const initialLibrary = loadLibrary();
+
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
-  ...createEmptyState(),
+  ...createEmptyState(initialLibrary),
   setActiveTool: (tool) => set({ activeTool: tool }),
   addPath: (nodes, overrides) => {
     const id = overrides?.meta?.id ?? createId('path');
@@ -219,6 +273,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         history,
         future: [],
         dirty: true,
+        bootstrapped: true,
       };
     });
     return id;
@@ -274,6 +329,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       oxidationDefaults: mergeOxidationSettings(state.oxidationDefaults, settings),
       dirty: true,
     })),
+  setPathMeta: (id, patch) =>
+    set((state) => {
+      const index = state.paths.findIndex((path) => path.meta.id === id);
+      if (index === -1) return state;
+      const nextPaths = [...state.paths];
+      nextPaths[index] = {
+        ...nextPaths[index],
+        meta: { ...nextPaths[index].meta, ...patch, updatedAt: Date.now() },
+      };
+      return { ...state, paths: nextPaths, dirty: true };
+    }),
   setProbe: (probe) => set((state) => ({
     measurements: { ...state.measurements, activeProbe: probe },
   })),
@@ -307,6 +373,69 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   dismissWarning: (id) => set((state) => ({
     warnings: state.warnings.filter((warning) => warning.id !== id),
   })),
+  toggleOxidationVisible: (value) => set({ oxidationVisible: value }),
+  markBootstrapped: () => set({ bootstrapped: true }),
+  saveShapeToLibrary: (pathId, name) =>
+    set((state) => {
+      const path = state.paths.find((entry) => entry.meta.id === pathId);
+      if (!path) return state;
+      const shape: StoredShape = {
+        id: createId('shape'),
+        name: name.trim() || path.meta.name,
+        nodes: path.nodes.map((node) => ({ ...node })),
+        oxidation: cloneOxidationSettings(path.oxidation),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const library = [shape, ...state.library];
+      persistLibrary(library);
+      return { ...state, library };
+    }),
+  removeShapeFromLibrary: (shapeId) =>
+    set((state) => {
+      const library = state.library.filter((shape) => shape.id !== shapeId);
+      persistLibrary(library);
+      return { ...state, library };
+    }),
+  renameShapeInLibrary: (shapeId, name) =>
+    set((state) => {
+      const library = state.library.map((shape) =>
+        shape.id === shapeId
+          ? { ...shape, name: name.trim() || shape.name, updatedAt: Date.now() }
+          : shape,
+      );
+      persistLibrary(library);
+      return { ...state, library };
+    }),
+  loadShapeFromLibrary: (shapeId) => {
+    const shape = get().library.find((entry) => entry.id === shapeId);
+    if (!shape) return;
+    const cloned = cloneStoredShape(shape);
+    get().addPath(cloned.nodes, {
+      oxidation: cloned.oxidation,
+      meta: {
+        id: createId('path'),
+        name: cloned.name,
+        closed: true,
+        visible: true,
+        locked: false,
+        color: '#2563eb',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    });
+  },
+  resetScene: () =>
+    set((state) => ({
+      ...state,
+      paths: [],
+      selectedPathIds: [],
+      measurements: { ...state.measurements, activeProbe: null, history: [] },
+      history: [],
+      future: [],
+      dirty: true,
+      bootstrapped: true,
+    })),
   undo: () => {
     const { history } = get();
     if (!history.length) return;
@@ -343,6 +472,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
     });
   },
-  importState: (payload) => set(() => ({ ...payload, history: [], future: [], dirty: false })),
-  reset: () => set(() => createEmptyState()),
+  importState: (payload) =>
+    set((state) => ({
+      ...createEmptyState(state.library.map(cloneStoredShape)),
+      ...payload,
+      oxidationVisible: payload.oxidationVisible ?? true,
+      bootstrapped: payload.bootstrapped ?? true,
+      library: state.library.map(cloneStoredShape),
+      history: [],
+      future: [],
+      dirty: false,
+    })),
+  reset: () =>
+    set((state) => ({
+      ...createEmptyState(state.library.map(cloneStoredShape)),
+      library: state.library.map(cloneStoredShape),
+    })),
 }));
