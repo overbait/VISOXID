@@ -435,24 +435,72 @@ const deriveInnerGeometry = (
     return candidate;
   });
 
-  const smoothingAlpha = Math.min(0.3, Math.max(0.1, resolution * 0.6));
+  const smoothingAlpha = Math.min(0.2, Math.max(0.05, resolution * 0.4));
   const smoothingIterations = resolution <= 0.2 ? 2 : 1;
   const smoothed = laplacianSmooth(candidateInner, smoothingAlpha, smoothingIterations, {
     closed: true,
   });
+  const alignedSmooth = alignLoop(smoothed, fallbackInner);
+
+  const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const onSegment = (a: Vec2, b: Vec2, c: Vec2): boolean =>
+    Math.min(a.x, b.x) - EPS <= c.x && c.x <= Math.max(a.x, b.x) + EPS &&
+    Math.min(a.y, b.y) - EPS <= c.y && c.y <= Math.max(a.y, b.y) + EPS;
+  const segmentsIntersect = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): boolean => {
+    const o1 = orientation(a1, a2, b1);
+    const o2 = orientation(a1, a2, b2);
+    const o3 = orientation(b1, b2, a1);
+    const o4 = orientation(b1, b2, a2);
+
+    const s1 = o1 * o2;
+    const s2 = o3 * o4;
+
+    if (s1 < -EPS && s2 < -EPS) {
+      return true;
+    }
+
+    if (Math.abs(o1) <= EPS && onSegment(a1, a2, b1)) return true;
+    if (Math.abs(o2) <= EPS && onSegment(a1, a2, b2)) return true;
+    if (Math.abs(o3) <= EPS && onSegment(b1, b2, a1)) return true;
+    if (Math.abs(o4) <= EPS && onSegment(b1, b2, a2)) return true;
+
+    return false;
+  };
+
+  const hasSelfIntersections = (loop: Vec2[]): boolean => {
+    if (loop.length < 4) return false;
+    const count = loop.length;
+    for (let i = 0; i < count; i += 1) {
+      const a1 = loop[i];
+      const a2 = loop[(i + 1) % count];
+      for (let j = i + 1; j < count; j += 1) {
+        if (Math.abs(i - j) <= 1) continue;
+        if (i === 0 && j === count - 1) continue;
+        const b1 = loop[j];
+        const b2 = loop[(j + 1) % count];
+        if (segmentsIntersect(a1, a2, b1, b2)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const needsCleaning = hasSelfIntersections(alignedSmooth);
 
   let polygons: Vec2[][] = [];
-  if (smoothed.length >= 3) {
-    const cleaningTolerance = Math.max(resolution * 2, 0.05);
-    polygons = cleanAndSimplifyPolygons(smoothed, cleaningTolerance);
+  if (needsCleaning) {
+    const cleaningTolerance = Math.max(resolution, 0.01);
+    polygons = cleanAndSimplifyPolygons(alignedSmooth, cleaningTolerance);
   }
-  if (!polygons.length && smoothed.length >= 3) {
-    polygons = [smoothed];
+  if (!polygons.length && alignedSmooth.length >= 3) {
+    polygons = [alignedSmooth];
   }
 
-  let innerSamples = smoothed;
+  let innerSamples = alignedSmooth;
 
-  if (polygons.length) {
+  if (needsCleaning && polygons.length) {
     const primary = polygons.reduce((largest, poly) =>
       Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
     polygons[0]);

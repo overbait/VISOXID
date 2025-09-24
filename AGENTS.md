@@ -87,3 +87,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `recomputeNormals` now flips averaged normals that point inward on closed loops using a centroid alignment check. Do not remove this guard—directional weights assume outward-facing normals.
 - The compass defaults map `E/N/W/S` to `0°/90°/180°/270°` so UI spokes match world-space directions. Keep this ordering when seeding new headings.
 - `ThicknessOptions` gained an optional `resolution` that defaults to `min(0.5, uniformThickness / 4)`. `deriveInnerGeometry` uses it for cleaning tolerance and picks between one or two Laplacian smoothing iterations via `laplacianSmooth(..., { closed: true })`.
+
+## 2025-10-12 — Oxide inner loop fidelity guard
+
+- `deriveInnerGeometry` now aligns the smoothed candidate loop back to the fallback normal projection before any cleaning. Only when the loop self-intersects do we route it through `cleanAndSimplifyPolygons`; otherwise we keep the full sample count so the inner contour mirrors the outer geometry.
+- The self-intersection test treats adjacent segments as shared vertices—don’t reuse it for open polylines without rethinking the guard.
