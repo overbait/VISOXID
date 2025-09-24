@@ -24,16 +24,11 @@ import {
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
-import {
-  clamp,
-  distance,
-  normalize,
-  findClosestPointOnPolygon,
-  alignLoop,
-} from '../utils/math';
-import createSDF from 'sdf-polygon-2d';
+import { clamp, distance, normalize, alignLoop, findClosestPointOnPolygon } from '../utils/math';
 import { isoLines } from 'marching-squares';
 import { evalThicknessForAngle, type ThicknessOptions } from '../geometry/thickness';
+
+const EPSILON = 1e-6;
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -49,6 +44,57 @@ const clampAngleDeg = (angleDeg: number): number => {
     wrapped += 360;
   }
   return wrapped;
+};
+
+const pointOnSegment = (point: Vec2, a: Vec2, b: Vec2, epsilon = EPSILON): boolean => {
+  const cross = (b.y - a.y) * (point.x - a.x) - (b.x - a.x) * (point.y - a.y);
+  if (Math.abs(cross) > epsilon) {
+    return false;
+  }
+  const minX = Math.min(a.x, b.x) - epsilon;
+  const maxX = Math.max(a.x, b.x) + epsilon;
+  const minY = Math.min(a.y, b.y) - epsilon;
+  const maxY = Math.max(a.y, b.y) + epsilon;
+  return point.x >= minX && point.x <= maxX && point.y >= minY && point.y <= maxY;
+};
+
+const isPointInsidePolygon = (point: Vec2, polygon: Vec2[], epsilon = EPSILON): boolean => {
+  if (polygon.length < 3) {
+    return false;
+  }
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i];
+    const b = polygon[j];
+    if (pointOnSegment(point, a, b, epsilon)) {
+      return true;
+    }
+    const intersect = (a.y > point.y) !== (b.y > point.y);
+    if (!intersect) {
+      continue;
+    }
+    const denom = b.y - a.y;
+    if (Math.abs(denom) < epsilon) {
+      continue;
+    }
+    const xAtY = a.x + ((point.y - a.y) * (b.x - a.x)) / denom;
+    if (point.x <= xAtY + epsilon) {
+      inside = !inside;
+    }
+  }
+  return inside;
+};
+
+const createSignedDistanceSampler = (polygon: Vec2[]): ((x: number, y: number) => number) => {
+  if (polygon.length < 2) {
+    return () => Infinity;
+  }
+  return (x: number, y: number): number => {
+    const point = { x, y };
+    const closest = findClosestPointOnPolygon(point, polygon);
+    const dist = distance(point, closest);
+    return isPointInsidePolygon(point, polygon) ? -dist : dist;
+  };
 };
 
 const normalizeLabel = (label: string | undefined): string => {
@@ -219,33 +265,6 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
   });
 };
 
-const computeCentroid = (points: Vec2[]): Vec2 => {
-  if (!points.length) {
-    return { x: 0, y: 0 };
-  }
-  let areaAcc = 0;
-  let cxAcc = 0;
-  let cyAcc = 0;
-  for (let i = 0; i < points.length; i += 1) {
-    const current = points[i];
-    const next = points[(i + 1) % points.length];
-    const cross = current.x * next.y - next.x * current.y;
-    areaAcc += cross;
-    cxAcc += (current.x + next.x) * cross;
-    cyAcc += (current.y + next.y) * cross;
-  }
-  const area = areaAcc / 2;
-  if (Math.abs(area) < 1e-6) {
-    const sum = points.reduce(
-      (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
-      { x: 0, y: 0 },
-    );
-    return { x: sum.x / points.length, y: sum.y / points.length };
-  }
-  const factor = 1 / (6 * area);
-  return { x: cxAcc * factor, y: cyAcc * factor };
-};
-
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
@@ -272,8 +291,8 @@ const deriveInnerGeometry = (
   maxX += padding;
   maxY += padding;
 
-  const outerPolygon = samples.map((s) => [s.position.x, s.position.y]);
-  const sdf = createSDF([outerPolygon]);
+  const outerPolygon = samples.map((s) => ({ x: s.position.x, y: s.position.y }));
+  const sdf = createSignedDistanceSampler(outerPolygon);
 
   const resolution = 0.5;
   const gridWidth = Math.ceil((maxX - minX) / resolution);
@@ -291,7 +310,8 @@ const deriveInnerGeometry = (
 
       const gradX = sdf(worldX + h, worldY) - sdf(worldX - h, worldY);
       const gradY = sdf(worldX, worldY + h) - sdf(worldX, worldY - h);
-      const normalAngle = Math.atan2(gradY, gradX);
+      const gradient = normalize({ x: gradX, y: gradY });
+      const normalAngle = Math.atan2(gradient.y, gradient.x);
 
       const inwardNormalAngle = normalAngle + Math.PI;
       const targetThickness = evalThicknessForAngle(inwardNormalAngle, thicknessOptions);
@@ -300,21 +320,25 @@ const deriveInnerGeometry = (
     }
   }
 
-  const rawPolygons = isoLines(scalarField, 0, { noQuadTree: true });
+  const rawContours = isoLines(scalarField, [0], { noQuadTree: true })[0] ?? [];
 
-  const toWorld = (p: Vec2): Vec2 => ({
-    x: minX + p.x * resolution,
-    y: minY + p.y * resolution,
+  const toWorld = ([px, py]: [number, number]): Vec2 => ({
+    x: minX + px * resolution,
+    y: minY + py * resolution,
   });
 
-  const polygons = rawPolygons.map((poly) => poly.map(toWorld));
+  const polygons = rawContours.flatMap((ring) => {
+    const worldRing = ring.map(toWorld);
+    const cleaned = cleanAndSimplifyPolygons(worldRing);
+    return cleaned.length ? cleaned : [worldRing];
+  });
 
   if (!polygons.length) {
     return { innerSamples: [], polygons: [] };
   }
 
   const primaryPolygon = polygons.reduce((largest, poly) =>
-    poly.length > largest.length ? poly : largest,
+    Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
   polygons[0]);
 
   if (primaryPolygon.length < 3) {
@@ -322,9 +346,9 @@ const deriveInnerGeometry = (
   }
 
   const rawInnerPoints = samples.map((sample) => ({
-      x: sample.position.x - sample.normal.x * sample.thickness,
-      y: sample.position.y - sample.normal.y * sample.thickness,
-    }));
+    x: sample.position.x - sample.normal.x * sample.thickness,
+    y: sample.position.y - sample.normal.y * sample.thickness,
+  }));
 
   const resampled = resampleClosedPolygon(primaryPolygon, samples.length);
   const innerSamples = alignLoop(resampled, rawInnerPoints);
