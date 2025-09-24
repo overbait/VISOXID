@@ -4,7 +4,7 @@ This project implements **Oxid Designer**, a Vite + React + TypeScript workbench
 
 ## Working Expectations
 
-- Keep the directional oxidation model intact.  Thickness is evaluated with a von Mises blend across the eight compass directions plus a uniform base term.  Geometry sampling, normals, smoothing, and offset visualisation flow through `workspaceStore.runGeometryPipeline()`.
+- The oxidation pipeline now derives the inner contour by first carving a uniform baseline offset with Clipper and then layering per-heading expansions along the outward normals.  Preserve this sequence inside `runGeometryPipeline()` so the oxide shell always honours the configured minimum thickness.
 - Canvas interactions must respect the active tool in state (`select`, `pen`, `edit`, `measure`, etc.).  Selections, node manipulation, and measurement overlays are driven from `CanvasViewport` using store actions.
 - Units inside the UI are **micrometres (μm)**.  Never reintroduce raw pixel units in UI strings or overlays.
 - The oxide preview is drawn inside the canvas renderer.  Do not remove the gradient fill between the external contour and the oxidised inner contour unless a spec change requires it.
@@ -23,7 +23,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Canvas interactions now cover node dragging (select/edit), pen-based contour sketching, and measurement in μm.  Do not regress pointer-capture logic inside `CanvasViewport`—other tools depend on it.
 - Oxidation rendering draws a ribbon gradient between the base contour and the inner oxide preview.  Respect the `oxidationVisible` flag when adding new render passes.
-- Directional weights are edited through the on-canvas compass (`DirectionalCompass`).  Avoid reintroducing the old slider grid; keep this overlay responsive.
+- Directional weights are edited through the compass card above the Tool panel.  Avoid reintroducing the old slider grid or the canvas overlay; keep this card responsive on narrow viewports.
 - Scene management gained a local library persisted to `localStorage`.  Use the helpers in `workspaceStore` when adding export/import features so persistence stays consistent.
 - Default geometry comes from `createCircleNodes` (see `src/utils/presets.ts`).  Reuse that helper for any future circular presets to avoid duplicated constants.
 
@@ -47,4 +47,20 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Workspace state now tracks `nodeSelection`; canvas hit-tests update this so the Scene panel can expose node-level toggles.  When mutating geometry arrays call `pruneNodeSelection` (or mirror its behaviour) to keep the selection in sync and avoid dangling node ids.
 - `setNodeCurveMode` promotes/demotes a node’s adjacent segments between straight and Bézier defaults.  Reuse it from UI rather than crafting handles manually—this helper preserves mirror snapping and history bookkeeping.
 - The measurement store no longer keeps a history list.  Hovering the outer contour populates `hoverProbe`, dragging creates `dragProbe`, and the last action pins to `pinnedProbe`.  All renderers read these three fields; don’t reintroduce the old history array.
-- Directional oxidation weights auto-average diagonals (NE, SE, SW, NW) from their neighbouring cardinals.  UI inputs for diagonals are read-only, and non-zero headings must surface with accented labels so users can see which directions are active at a glance.
+
+## 2024-06-01 — Compass spokes, progressive oxidation & baseline offsets
+
+- Directional weights surface as coloured spokes in the compass card (`DirectionalCompass`). Each spoke length & hue encode the μm value; clicking opens a nearby popover with ± nudges and a numeric input. The outer plus button toggles add mode—while active, click the rim to insert a new heading. Keep Delete support for the focused spoke and honour the `directionalLinking` flag when propagating edits.
+- Heading data still travels through `DirectionWeight` objects (`id`, `label`, `angleDeg`, `valueUm`). `evalThickness` continues to blend headings with a cosine falloff and the global oxidation progress scalar—pass `progress` everywhere thickness is evaluated so the card, slider, and preview stay synchronised.
+- Oxidation preview scaling is controlled by `workspaceStore.setOxidationProgress`. The Canvas viewport renders a bottom slider—leave it functional and ensure future changes clamp values to [0, 1] before re-running `runGeometryPipeline`.
+- Inner oxide geometry now combines a Clipper-derived uniform inset with extra directional travel along each sample’s outward normal. Preserve this baseline-before-extras ordering when adjusting the pipeline and continue to sanitise the resulting polygons with `cleanAndSimplifyPolygons`.
+
+## 2024-06-02 — Clipper offset execution fix
+
+- `computeOffset` must call `ClipperOffset.Execute` with an output array to avoid mutating a numeric delta (the JS port mutates the array argument). Reuse the shared helper and don’t reintroduce the old single-argument form—it hard-crashes the app on startup.
+
+## 2025-02-14 — Multi-loop oxidation alignment rewrite
+
+- `deriveInnerGeometry` now ray-marches each outer sample toward the Clipper inset so multi-lobed baselines keep their own sample groups. Do not short-circuit this cast; directional extras depend on the per-sample hit result.
+- Inner candidates are cleaned per inset loop and resampled back onto the original sample indices. If you tweak this, make sure `innerSamples[i]` still pairs with `samples[i]` even when inset polygons split apart.
+- The grouped cleaning step may return multiple loops—keep assigning anchors by proximity so stray spokes don’t jump across gaps. If you add new filters, preserve this grouping.

@@ -21,16 +21,15 @@ export interface PathNode {
   timestamp?: number;
 }
 
-export type DirKey = 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW';
-
 export interface DirectionWeight {
-  dir: DirKey;
+  id: string;
+  label: string;
+  angleDeg: number;
   valueUm: number;
 }
 
 export interface WeightsByDirection {
   items: DirectionWeight[];
-  kappa: number;
 }
 
 export interface PathMeta {
@@ -64,8 +63,6 @@ export interface SampledPath {
 export interface OxidationSettings {
   thicknessUniformUm: number;
   thicknessByDirection: WeightsByDirection;
-  smoothingIterations: number;
-  smoothingStrength: number;
   evaluationSpacing: number;
   mirrorSymmetry: boolean;
 }
@@ -142,6 +139,7 @@ export interface WorkspaceSnapshot {
   selectedPathIds: string[];
   activeTool: ToolId;
   nodeSelection: NodeSelection | null;
+  oxidationProgress: number;
 }
 
 export interface WorkspaceState {
@@ -158,6 +156,8 @@ export interface WorkspaceState {
   future: WorkspaceSnapshot[];
   dirty: boolean;
   oxidationVisible: boolean;
+  oxidationProgress: number;
+  directionalLinking: boolean;
   bootstrapped: boolean;
   library: StoredShape[];
 }

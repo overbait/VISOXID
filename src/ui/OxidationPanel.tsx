@@ -36,10 +36,10 @@ export const OxidationPanel = () => {
   const preview = useMemo(
     () => [
       { label: 'Uniform', value: `${formatValue(active.thicknessUniformUm)} μm` },
-      { label: 'κ', value: formatValue(active.thicknessByDirection.kappa) },
-      { label: 'Δ range', value: `${formatValue(range.max - range.min)} μm` },
+      { label: 'Directional span', value: `${formatValue(range.max - range.min)} μm` },
+      { label: 'Headings', value: `${active.thicknessByDirection.items.length}` },
     ],
-    [active.thicknessByDirection.kappa, active.thicknessUniformUm, range.max, range.min],
+    [active.thicknessByDirection.items.length, active.thicknessUniformUm, range.max, range.min],
   );
 
   return (
@@ -67,7 +67,7 @@ export const OxidationPanel = () => {
           label="Uniform thickness"
           min={0}
           max={10}
-          step={0.5}
+          step={0.1}
           value={active.thicknessUniformUm}
           onChange={(value) => {
             const clamped = Math.min(10, Math.max(0, value));
@@ -75,54 +75,10 @@ export const OxidationPanel = () => {
             applyToSelected({ thicknessUniformUm: clamped });
           }}
         />
-        <LabeledSlider
-          label="Smoothing strength"
-          min={0.1}
-          max={1}
-          step={0.05}
-          value={active.smoothingStrength}
-          onChange={(value) => {
-            updateDefaults({ smoothingStrength: value });
-            applyToSelected({ smoothingStrength: value });
-          }}
-        />
-        <LabeledSlider
-          label="Smoothing iterations"
-          min={0}
-          max={5}
-          step={1}
-          value={active.smoothingIterations}
-          onChange={(value) => {
-            const rounded = Math.round(value);
-            updateDefaults({ smoothingIterations: rounded });
-            applyToSelected({ smoothingIterations: rounded });
-          }}
-        />
-        <LabeledSlider
-          label="Directional κ"
-          min={1}
-          max={12}
-          step={0.25}
-          value={active.thicknessByDirection.kappa}
-          onChange={(value) => {
-            updateDefaults({
-              thicknessByDirection: {
-                ...defaults.thicknessByDirection,
-                kappa: value,
-              },
-            });
-            applyToSelected({
-              thicknessByDirection: {
-                ...active.thicknessByDirection,
-                kappa: value,
-              },
-            });
-          }}
-        />
       </div>
       <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs text-muted">
-        Directional μm offsets can be edited via the circular compass overlay on the canvas. Tap a cardinal label there to input
-        values directly.
+        Use the compass card on the left to add, remove, or edit directional μm offsets. Toggle the chain icon there to choose
+        whether neighbouring headings adapt automatically.
       </div>
       <label className="flex items-center gap-2 text-xs font-medium text-muted">
         <input

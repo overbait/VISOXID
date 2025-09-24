@@ -10,7 +10,6 @@ import {
   computeViewTransform,
   type ViewTransform,
 } from '../canvas/viewTransform';
-import { DirectionalCompass } from './DirectionalCompass';
 
 type DragTarget =
   | { kind: 'anchor'; pathId: string; nodeId: string }
@@ -49,6 +48,8 @@ export const CanvasViewport = () => {
   const addPath = useWorkspaceStore((state) => state.addPath);
   const setPathMeta = useWorkspaceStore((state) => state.setPathMeta);
   const toggleSegmentCurve = useWorkspaceStore((state) => state.toggleSegmentCurve);
+  const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
+  const setOxidationProgress = useWorkspaceStore((state) => state.setOxidationProgress);
   const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
@@ -426,7 +427,23 @@ export const CanvasViewport = () => {
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
       />
-      <DirectionalCompass />
+      <div className="pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-2xl border border-border bg-white/85 px-4 py-3 shadow">
+        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted">Oxidation timeline</span>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-muted">0%</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={0.1}
+            value={oxidationProgress * 100}
+            className="pointer-events-auto accent-accent"
+            onChange={(event) => setOxidationProgress(Number(event.target.value) / 100)}
+          />
+          <span className="text-[11px] text-muted">100%</span>
+        </div>
+        <span className="text-[11px] font-semibold text-text">{(oxidationProgress * 100).toFixed(1)}%</span>
+      </div>
       {(activeTool === 'measure' || cursorHint) && (
         <div className="pointer-events-none absolute left-4 top-4 rounded-xl bg-white/90 px-3 py-2 text-xs font-medium text-muted shadow">
           {activeTool === 'measure' ? 'Click & drag to measure (μm)' : cursorHint}

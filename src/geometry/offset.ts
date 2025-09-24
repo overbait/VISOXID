@@ -28,6 +28,7 @@ type ClipperModule = {
   ClipperOffset: new (miterLimit?: number, arcTolerance?: number) => {
     AddPath(path: IntPoint[], joinType: number, endType: number): void;
     Execute(delta: number): IntPoint[][];
+    Execute(solution: IntPoint[][], delta: number): void;
   };
   Clipper: {
     CleanPolygon(path: IntPoint[], distance: number): IntPoint[];
@@ -51,7 +52,8 @@ export const computeOffset = (path: Vec2[], options: OffsetOptions): Vec2[][] =>
   const integerPath: IntPoint[] = path.map((p) => ({ X: Math.round(p.x * SCALE), Y: Math.round(p.y * SCALE) }));
   const offset = new clipper.ClipperOffset(2, miterLimit * SCALE);
   offset.AddPath(integerPath, joinMap[joinStyle], clipper.EndType.etClosedPolygon);
-  const solution = offset.Execute(delta * SCALE);
+  const solution: IntPoint[][] = [];
+  offset.Execute(solution, delta * SCALE);
   return solution.map((poly) => poly.map((pt) => ({ x: pt.X / SCALE, y: pt.Y / SCALE })));
 };
 
