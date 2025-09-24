@@ -19,13 +19,11 @@ import {
   adaptiveSamplePath,
   accumulateLength,
   cleanAndSimplifyPolygons,
-  computeOffset,
   evalThickness,
   polygonArea,
   recomputeNormals,
-  resampleClosedPolygon,
 } from '../geometry';
-import { clamp, distance, normalize, alignLoop } from '../utils/math';
+import { clamp, distance, normalize, findClosestPointOnPolygon } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -241,44 +239,30 @@ const computeCentroid = (points: Vec2[]): Vec2 => {
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
-  centroid: Vec2,
 ): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
-  if (!samples.length) {
-    return { innerSamples: [], polygons: [] };
+  if (!closed || samples.length < 3) {
+    const innerSamples = samples.map((sample) => ({
+      x: sample.position.x - sample.normal.x * sample.thickness,
+      y: sample.position.y - sample.normal.y * sample.thickness,
+    }));
+    return { innerSamples, polygons: [] };
   }
 
-  const fallbackDirection = (sample: SamplePoint): Vec2 => {
-    const normalDir = normalize(sample.normal);
-    if (normalDir.x !== 0 || normalDir.y !== 0) {
-      return normalDir;
-    }
-    const radial = normalize({
-      x: sample.position.x - centroid.x,
-      y: sample.position.y - centroid.y,
-    });
-    if (radial.x !== 0 || radial.y !== 0) {
-      return radial;
-    }
-    return { x: 0, y: -1 };
-  };
+  // Create a "raw" inner contour by offsetting each sample by its full thickness.
+  // This will have self-intersections, which Clipper will clean up.
+  const rawInnerPoints = samples.map((sample) => ({
+    x: sample.position.x - sample.normal.x * sample.thickness,
+    y: sample.position.y - sample.normal.y * sample.thickness,
+  }));
 
-  const rawInnerPoints = samples.map((sample) => {
-    const direction = fallbackDirection(sample);
-    return {
-      x: sample.position.x - direction.x * sample.thickness,
-      y: sample.position.y - direction.y * sample.thickness,
-    };
-  });
-
-  if (!closed || rawInnerPoints.length < 3) {
-    return { innerSamples: rawInnerPoints, polygons: [] };
-  }
-
+  // Use Clipper to clean the raw polygon. This resolves all self-intersections.
   const cleanedPolygons = cleanAndSimplifyPolygons(rawInnerPoints, 0.25);
+
   if (!cleanedPolygons.length) {
     return { innerSamples: rawInnerPoints, polygons: [] };
   }
 
+  // Assume the largest resulting polygon is the one we want.
   const primaryPolygon = cleanedPolygons.reduce((largest, poly) =>
     Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
   cleanedPolygons[0]);
@@ -287,15 +271,17 @@ const deriveInnerGeometry = (
     return { innerSamples: rawInnerPoints, polygons: cleanedPolygons };
   }
 
-  const resampled = resampleClosedPolygon(primaryPolygon, rawInnerPoints.length);
-  const innerSamples = alignLoop(resampled, rawInnerPoints);
+  // Map the original outer samples to the new, clean inner polygon.
+  // This preserves the 1-to-1 correspondence needed for rendering the gradient.
+  const innerSamples = samples.map((sample) =>
+    findClosestPointOnPolygon(sample.position, primaryPolygon),
+  );
 
   return {
     innerSamples,
     polygons: cleanedPolygons,
   };
 };
-
 
 const pruneNodeSelection = (
   selection: NodeSelection | null,
@@ -428,11 +414,9 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
     progress,
   });
-  const centroid = computeCentroid(withThickness.map((sample) => sample.position));
   const { innerSamples, polygons } = deriveInnerGeometry(
     withThickness,
     path.meta.closed,
-    centroid,
   );
   const length = accumulateLength(withThickness);
   return {

@@ -74,34 +74,40 @@ const besseli0 = (x: number): number => {
   return sum;
 };
 
-export const alignLoop = (loopToAlign: Vec2[], anchorLoop: Vec2[]): Vec2[] => {
-  if (loopToAlign.length !== anchorLoop.length || loopToAlign.length === 0) {
-    return loopToAlign;
+export const closestPointOnSegment = (p: Vec2, a: Vec2, b: Vec2): Vec2 => {
+  const ap = sub(p, a);
+  const ab = sub(b, a);
+  const ab2 = ab.x * ab.x + ab.y * ab.y;
+  if (ab2 === 0) {
+    return a;
+  }
+  const ap_dot_ab = ap.x * ab.x + ap.y * ab.y;
+  const t = clamp(ap_dot_ab / ab2, 0, 1);
+  return add(a, scale(ab, t));
+};
+
+export const findClosestPointOnPolygon = (point: Vec2, polygon: Vec2[]): Vec2 => {
+  if (!polygon.length) {
+    return { x: 0, y: 0 };
+  }
+  if (polygon.length === 1) {
+    return polygon[0];
   }
 
-  let bestLoop = loopToAlign;
-  let bestScore = Infinity;
+  let closestPoint = { x: 0, y: 0 };
+  let minDistanceSq = Infinity;
 
-  const evaluate = (candidate: Vec2[]): number => {
-    let score = 0;
-    for (let i = 0; i < candidate.length; i++) {
-      score += lengthSq(sub(candidate[i], anchorLoop[i]));
-    }
-    return score;
-  };
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    const candidate = closestPointOnSegment(point, a, b);
+    const candidateDistSq = lengthSq(sub(point, candidate));
 
-  const orientations = [loopToAlign, [...loopToAlign].reverse()];
-
-  for (const orientation of orientations) {
-    for (let i = 0; i < orientation.length; i++) {
-      const rotated = orientation.slice(i).concat(orientation.slice(0, i));
-      const score = evaluate(rotated);
-      if (score < bestScore) {
-        bestScore = score;
-        bestLoop = rotated;
-      }
+    if (candidateDistSq < minDistanceSq) {
+      minDistanceSq = candidateDistSq;
+      closestPoint = candidate;
     }
   }
 
-  return bestLoop;
+  return closestPoint;
 };
