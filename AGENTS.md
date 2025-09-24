@@ -81,3 +81,25 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `deriveInnerGeometry` now builds the oxide interior using a variable-radius power diagram instead of rasterised SDF marching squares. Each boundary sample contributes a circle with its local thickness; visible arcs define the offset envelope.
 - The helper filters arcs to the inward half-space so compass headings (“N”, “E”, …) map to the expected directions after evaluating normals.
 - A small Laplacian smoothing pass post-processes the sampled loop to remove stair-steps before cleaning/resampling. Preserve this order if you refine the algorithm.
+
+## 2025-10-11 — Normal orientation & adaptive oxide resolution
+
+- `recomputeNormals` now flips averaged normals that point inward on closed loops using a centroid alignment check. Do not remove this guard—directional weights assume outward-facing normals.
+- The compass defaults map `E/N/W/S` to `0°/90°/180°/270°` so UI spokes match world-space directions. Keep this ordering when seeding new headings.
+- `ThicknessOptions` gained an optional `resolution` that defaults to `min(0.5, uniformThickness / 4)`. `deriveInnerGeometry` uses it for cleaning tolerance and picks between one or two Laplacian smoothing iterations via `laplacianSmooth(..., { closed: true })`.
+
+## 2025-10-12 — Oxide inner loop fidelity guard
+
+- `deriveInnerGeometry` now aligns the smoothed candidate loop back to the fallback normal projection before any cleaning. Only when the loop self-intersects do we route it through `cleanAndSimplifyPolygons`; otherwise we keep the full sample count so the inner contour mirrors the outer geometry.
+- The self-intersection test treats adjacent segments as shared vertices—don’t reuse it for open polylines without rethinking the guard.
+
+## 2025-10-13 — Normal-locked oxide floor
+
+- `recomputeNormals` now derives tangents from central differences (with optional smoothing) and normalises per-sample so normals stay perpendicular to the actual path, even through sharp corners. Keep this routine if you tweak sampling—directional weights assume normals never skew off their spokes.
+- `deriveInnerGeometry` reprojects all candidates back onto each sample’s inward normal after smoothing/cleaning, clamping travel to at least the requested thickness (uniform + compass weight). Any future adjustments must preserve this minimum-distance enforcement so oxide thickness never drops below the configured floor.
+
+## 2025-10-14 — Arc-sampled oxide envelope
+
+- `deriveInnerGeometry` now builds a dense envelope by sampling the visible arcs of each per-sample oxidation circle (minimum six points per segment) before resampling back to the original sample count. Preserve this arc sampling when tuning offsets so the inner contour keeps circular curvature instead of collapsing to straight chords.
+- The dense arc cloud is cleaned separately and exposed through `innerPolygons`; reuse the `closedDenseLoop` helper when exporting or debugging to avoid reintroducing duplicate closing vertices.
+- Arc sampling depends on the outer loop orientation; if you change how samples are ordered, recompute the `orientationSign` in lock-step so arc traversal stays consistent.
