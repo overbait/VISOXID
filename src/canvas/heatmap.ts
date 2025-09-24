@@ -1,4 +1,5 @@
 import type { PathEntity } from '../types';
+import { worldToCanvas, type ViewTransform } from './viewTransform';
 
 const toHeatColor = (value: number, min: number, max: number): string => {
   const t = max === min ? 0 : (value - min) / (max - min);
@@ -9,6 +10,7 @@ const toHeatColor = (value: number, min: number, max: number): string => {
 export const drawHeatmap = (
   ctx: CanvasRenderingContext2D,
   path: PathEntity,
+  view: ViewTransform,
 ): void => {
   const samples = path.sampled?.samples;
   if (!samples?.length) return;
@@ -24,8 +26,10 @@ export const drawHeatmap = (
     const color = toHeatColor((prev.thickness + curr.thickness) / 2, min, max);
     ctx.strokeStyle = `${color}88`;
     ctx.beginPath();
-    ctx.moveTo(prev.position.x, prev.position.y);
-    ctx.lineTo(curr.position.x, curr.position.y);
+    const prevScreen = worldToCanvas(prev.position, view);
+    const currScreen = worldToCanvas(curr.position, view);
+    ctx.moveTo(prevScreen.x, prevScreen.y);
+    ctx.lineTo(currScreen.x, currScreen.y);
     ctx.stroke();
   }
   ctx.restore();

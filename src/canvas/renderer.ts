@@ -6,6 +6,7 @@ import { drawHeatmap } from './heatmap';
 import { drawSnaps } from './snaps';
 import { drawMeasurements } from './measurements';
 import { drawMirrorAxes } from './mirror';
+import { computeViewTransform } from './viewTransform';
 
 export type StateGetter = () => WorkspaceState;
 
@@ -71,19 +72,20 @@ export class CanvasRenderer {
     this.ctx.clearRect(0, 0, width, height);
     const logicalWidth = width / this.dpr;
     const logicalHeight = height / this.dpr;
-    drawGrid(this.ctx, logicalWidth, logicalHeight, state.grid);
-    drawMirrorAxes(this.ctx, logicalWidth, logicalHeight, state.mirror);
+    const view = computeViewTransform(logicalWidth, logicalHeight);
+    drawGrid(this.ctx, state.grid, view);
+    drawMirrorAxes(this.ctx, state.mirror, view);
     const showHeatmap = state.measurements.showHeatmap;
     state.paths.forEach((path) => {
       const selected = state.selectedPathIds.includes(path.meta.id);
       if (showHeatmap) {
-        drawHeatmap(this.ctx, path);
+        drawHeatmap(this.ctx, path, view);
       }
-      drawContours(this.ctx, path, selected);
-      drawHandles(this.ctx, path, selected);
+      drawContours(this.ctx, path, selected, state.oxidationVisible, view, state.mirror);
+      drawHandles(this.ctx, path, selected, view, state.nodeSelection);
     });
-    drawSnaps(this.ctx, state.paths, state.measurements);
-    drawMeasurements(this.ctx, state.measurements);
+    drawSnaps(this.ctx, state.paths, state.measurements, view);
+    drawMeasurements(this.ctx, state.measurements, view);
     this.ctx.restore();
   }
 }

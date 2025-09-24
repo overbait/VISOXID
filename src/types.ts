@@ -21,6 +21,17 @@ export interface PathNode {
   timestamp?: number;
 }
 
+export interface DirectionWeight {
+  id: string;
+  label: string;
+  angleDeg: number;
+  valueUm: number;
+}
+
+export interface WeightsByDirection {
+  items: DirectionWeight[];
+}
+
 export interface PathMeta {
   id: string;
   name: string;
@@ -45,16 +56,14 @@ export interface SampledPath {
   id: string;
   samples: SamplePoint[];
   length: number;
+  innerSamples?: Vec2[];
+  innerPolygons?: Vec2[][];
 }
 
 export interface OxidationSettings {
-  kernelWidth: number;
-  targetThickness: number;
-  baseThickness: number;
-  smoothingIterations: number;
-  smoothingStrength: number;
+  thicknessUniformUm: number;
+  thicknessByDirection: WeightsByDirection;
   evaluationSpacing: number;
-  vonMisesKappa: number;
   mirrorSymmetry: boolean;
 }
 
@@ -62,6 +71,15 @@ export interface OxidationPreset {
   id: string;
   label: string;
   settings: OxidationSettings;
+}
+
+export interface StoredShape {
+  id: string;
+  name: string;
+  nodes: PathNode[];
+  oxidation: OxidationSettings;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface GridSettings {
@@ -89,10 +107,16 @@ export interface MeasurementProbe {
 }
 
 export interface MeasurementState {
-  activeProbe: MeasurementProbe | null;
-  history: MeasurementProbe[];
+  hoverProbe: MeasurementProbe | null;
+  pinnedProbe: MeasurementProbe | null;
+  dragProbe: MeasurementProbe | null;
   snapping: boolean;
   showHeatmap: boolean;
+}
+
+export interface NodeSelection {
+  pathId: string;
+  nodeIds: string[];
 }
 
 export interface PathEntity {
@@ -114,11 +138,14 @@ export interface WorkspaceSnapshot {
   paths: PathEntity[];
   selectedPathIds: string[];
   activeTool: ToolId;
+  nodeSelection: NodeSelection | null;
+  oxidationProgress: number;
 }
 
 export interface WorkspaceState {
   paths: PathEntity[];
   selectedPathIds: string[];
+  nodeSelection: NodeSelection | null;
   activeTool: ToolId;
   grid: GridSettings;
   mirror: MirrorSettings;
@@ -128,6 +155,11 @@ export interface WorkspaceState {
   history: WorkspaceSnapshot[];
   future: WorkspaceSnapshot[];
   dirty: boolean;
+  oxidationVisible: boolean;
+  oxidationProgress: number;
+  directionalLinking: boolean;
+  bootstrapped: boolean;
+  library: StoredShape[];
 }
 
 export interface ExportedProject {

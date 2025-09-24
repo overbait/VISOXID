@@ -14,6 +14,7 @@ export const useKeyboardShortcuts = () => {
   const setActiveTool = useWorkspaceStore((state) => state.setActiveTool);
   const undo = useWorkspaceStore((state) => state.undo);
   const redo = useWorkspaceStore((state) => state.redo);
+  const deleteSelectedNodes = useWorkspaceStore((state) => state.deleteSelectedNodes);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -34,6 +35,10 @@ export const useKeyboardShortcuts = () => {
         event.preventDefault();
         setActiveTool(keyMap[key]);
       }
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        event.preventDefault();
+        deleteSelectedNodes();
+      }
       if (event.code === 'Space') {
         event.preventDefault();
         setActiveTool('pan');
@@ -41,5 +46,5 @@ export const useKeyboardShortcuts = () => {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [redo, setActiveTool, undo]);
+  }, [deleteSelectedNodes, redo, setActiveTool, undo]);
 };
