@@ -97,3 +97,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `recomputeNormals` now derives tangents from central differences (with optional smoothing) and normalises per-sample so normals stay perpendicular to the actual path, even through sharp corners. Keep this routine if you tweak sampling—directional weights assume normals never skew off their spokes.
 - `deriveInnerGeometry` reprojects all candidates back onto each sample’s inward normal after smoothing/cleaning, clamping travel to at least the requested thickness (uniform + compass weight). Any future adjustments must preserve this minimum-distance enforcement so oxide thickness never drops below the configured floor.
+
+## 2025-10-14 — Arc-sampled oxide envelope
+
+- `deriveInnerGeometry` now builds a dense envelope by sampling the visible arcs of each per-sample oxidation circle (minimum six points per segment) before resampling back to the original sample count. Preserve this arc sampling when tuning offsets so the inner contour keeps circular curvature instead of collapsing to straight chords.
+- The dense arc cloud is cleaned separately and exposed through `innerPolygons`; reuse the `closedDenseLoop` helper when exporting or debugging to avoid reintroducing duplicate closing vertices.
+- Arc sampling depends on the outer loop orientation; if you change how samples are ordered, recompute the `orientationSign` in lock-step so arc traversal stays consistent.

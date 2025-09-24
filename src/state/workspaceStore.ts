@@ -222,6 +222,10 @@ const deriveInnerGeometry = (
     y: sample.position.y - sample.normal.y * sample.thickness,
   }));
 
+  const outerLoop = samples.map((sample) => sample.position);
+  const outerArea = polygonArea(outerLoop);
+  const orientationSign = outerArea >= 0 ? 1 : -1;
+
   if (!closed || samples.length < 3) {
     return { innerSamples: fallbackInner, polygons: [] };
   }
@@ -382,7 +386,18 @@ const deriveInnerGeometry = (
     normal: sample.normal,
   }));
 
-  const candidateInner: Vec2[] = samples.map((sample, index) => {
+  const denseLoop: Vec2[] = [];
+
+  const appendToDenseLoop = (points: Vec2[]): void => {
+    for (const point of points) {
+      const last = denseLoop.at(-1);
+      if (!last || distance(last, point) > Math.max(resolution * 0.25, 0.01)) {
+        denseLoop.push(point);
+      }
+    }
+  };
+
+  const sampledInner: Vec2[] = samples.map((sample, index) => {
     const circle = circles[index];
     if (circle.radius <= EPS) {
       return fallbackInner[index];
@@ -409,9 +424,6 @@ const deriveInnerGeometry = (
 
     const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
     const inwardArc = arcs.find((arc) => angleInArc(inwardAngle, arc));
-    let chosenAngle: number | null = null;
-
-    const inwardCandidate = inwardArc ? clampAngleToArc(inwardAngle, inwardArc) : null;
 
     const arcCandidates = arcs.filter((arc) => {
       const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
@@ -422,15 +434,16 @@ const deriveInnerGeometry = (
 
     const availableArcs = arcCandidates.length ? arcCandidates : arcs;
 
-    if (inwardCandidate !== null) {
-      const preview = toPointOnCircle(circle, inwardCandidate);
-      const direction = sub(preview, sample.position);
-      if (dot(direction, sample.normal) < -EPS) {
-        chosenAngle = inwardCandidate;
+    let selectedArc: Arc | null = null;
+    if (inwardArc) {
+      const mid = wrapAngle(inwardArc.start + (inwardArc.end - inwardArc.start) / 2);
+      const preview = toPointOnCircle(circle, mid);
+      if (dot(sub(preview, sample.position), sample.normal) < -EPS) {
+        selectedArc = inwardArc;
       }
     }
 
-    if (chosenAngle === null && availableArcs.length) {
+    if (!selectedArc && availableArcs.length) {
       let bestArc = availableArcs[0];
       let bestScore = Infinity;
       for (const arc of availableArcs) {
@@ -441,25 +454,64 @@ const deriveInnerGeometry = (
           bestArc = arc;
         }
       }
-      chosenAngle = clampAngleToArc(inwardAngle, bestArc);
+      selectedArc = bestArc;
+    }
+
+    let chosenAngle: number | null = null;
+    if (selectedArc) {
+      chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
+      const span = selectedArc.end - selectedArc.start;
+      const approxLength = circle.radius * span;
+      const subdivisions = Math.max(6, Math.ceil(approxLength / Math.max(resolution, 0.01)));
+      const arcPoints: Vec2[] = [];
+      for (let step = 0; step < subdivisions; step += 1) {
+        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
+        const angle =
+          orientationSign >= 0
+            ? selectedArc.start + span * t
+            : selectedArc.end - span * t;
+        arcPoints.push(toPointOnCircle(circle, angle));
+      }
+      appendToDenseLoop(arcPoints);
     }
 
     if (chosenAngle === null) {
-      return fallbackInner[index];
+      const fallback = fallbackInner[index];
+      appendToDenseLoop([fallback]);
+      return fallback;
     }
 
     const candidate = toPointOnCircle(circle, chosenAngle);
     const direction = sub(candidate, sample.position);
     if (dot(direction, sample.normal) >= -EPS) {
+      appendToDenseLoop([fallbackInner[index]]);
       return fallbackInner[index];
     }
 
     return candidate;
   });
 
+  let seededLoop: Vec2[] = sampledInner;
+  const closedDenseLoop = (() => {
+    if (denseLoop.length < 3) return denseLoop;
+    const first = denseLoop[0];
+    const last = denseLoop.at(-1)!;
+    if (distance(first, last) <= Math.max(resolution * 0.5, 0.02)) {
+      return denseLoop.slice(0, -1);
+    }
+    return denseLoop;
+  })();
+
+  if (closedDenseLoop.length >= 3 && samples.length >= 3) {
+    const resampled = resampleClosedPolygon(closedDenseLoop, samples.length);
+    if (resampled.length === samples.length) {
+      seededLoop = resampled;
+    }
+  }
+
   const smoothingAlpha = Math.min(0.2, Math.max(0.05, resolution * 0.4));
   const smoothingIterations = resolution <= 0.2 ? 2 : 1;
-  const smoothed = laplacianSmooth(candidateInner, smoothingAlpha, smoothingIterations, {
+  const smoothed = laplacianSmooth(seededLoop, smoothingAlpha, smoothingIterations, {
     closed: true,
   });
   const alignedSmooth = alignLoop(smoothed, fallbackInner);
@@ -513,9 +565,9 @@ const deriveInnerGeometry = (
   const needsCleaning = hasSelfIntersections(enforced);
 
   let polygons: Vec2[][] = [];
-  if (needsCleaning) {
+  if (closedDenseLoop.length >= 3) {
     const cleaningTolerance = Math.max(resolution, 0.01);
-    polygons = cleanAndSimplifyPolygons(enforced, cleaningTolerance);
+    polygons = cleanAndSimplifyPolygons(closedDenseLoop, cleaningTolerance);
   }
   if (!polygons.length && enforced.length >= 3) {
     polygons = [enforced];
