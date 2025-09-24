@@ -262,51 +262,86 @@ const deriveInnerGeometry = (
     return { x: 0, y: -1 };
   };
 
+  const directions = samples.map((sample) => fallbackDirection(sample));
   const thicknessValues = samples.map((sample) => sample.thickness);
   const baselineThickness = Math.max(Math.min(...thicknessValues), 0);
 
-  const initialBaseline = samples.map((sample) => {
-    const direction = fallbackDirection(sample);
-    return {
-      x: sample.position.x - direction.x * baselineThickness,
-      y: sample.position.y - direction.y * baselineThickness,
-    };
-  });
+  const initialBaseline = samples.map((sample, index) => ({
+    x: sample.position.x - directions[index].x * baselineThickness,
+    y: sample.position.y - directions[index].y * baselineThickness,
+  }));
 
-  let baselineSamples = initialBaseline;
-  if (closed && baselineThickness > 0) {
-    const outerPolygon = samples.map((sample) => sample.position);
-    const offsets = computeOffset(outerPolygon, {
-      delta: -baselineThickness,
-      joinStyle: 'round',
-      miterLimit: 6,
-    });
-    if (offsets.length) {
-      const primaryBaseline = offsets.reduce((largest, poly) =>
-        Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
-      offsets[0]);
-      if (primaryBaseline.length >= 3) {
-        const resampledBaseline = resampleClosedPolygon(primaryBaseline, samples.length);
-        if (resampledBaseline.length === samples.length) {
-          baselineSamples = resampledBaseline;
-        } else if (resampledBaseline.length) {
-          baselineSamples = resampledBaseline;
+  const baselinePolygons =
+    closed && baselineThickness > 0
+      ? computeOffset(samples.map((sample) => sample.position), {
+          delta: -baselineThickness,
+          joinStyle: 'round',
+          miterLimit: 6,
+        }).filter((polygon) => polygon.length >= 3)
+      : [];
+
+  type BaselineHit = { point: Vec2; polygonIndex: number };
+  const baselineHits: BaselineHit[] = initialBaseline.map((point) => ({
+    point,
+    polygonIndex: -1,
+  }));
+
+  const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
+
+  const projectRayOntoPolygon = (origin: Vec2, inward: Vec2): BaselineHit | null => {
+    const EPS = 1e-6;
+    let closest: BaselineHit | null = null;
+    let closestDistance = Infinity;
+
+    baselinePolygons.forEach((polygon, polygonIndex) => {
+      for (let i = 0; i < polygon.length; i += 1) {
+        const a = polygon[i];
+        const b = polygon[(i + 1) % polygon.length];
+        const edge = { x: b.x - a.x, y: b.y - a.y };
+        const denom = cross(inward, edge);
+        if (Math.abs(denom) < EPS) {
+          continue;
+        }
+        const diff = { x: a.x - origin.x, y: a.y - origin.y };
+        const t = cross(diff, edge) / denom;
+        const u = cross(diff, inward) / denom;
+        if (t < -EPS || u < -EPS || u > 1 + EPS) {
+          continue;
+        }
+        const distanceAlongRay = t < 0 ? 0 : t;
+        if (distanceAlongRay < closestDistance) {
+          const point = {
+            x: origin.x + inward.x * distanceAlongRay,
+            y: origin.y + inward.y * distanceAlongRay,
+          };
+          closestDistance = distanceAlongRay;
+          closest = { point, polygonIndex };
         }
       }
-    }
+    });
+
+    return closest;
+  };
+
+  if (baselinePolygons.length) {
+    samples.forEach((sample, index) => {
+      const inward = { x: -directions[index].x, y: -directions[index].y };
+      if (inward.x === 0 && inward.y === 0) {
+        return;
+      }
+      const hit = projectRayOntoPolygon(sample.position, inward);
+      if (hit) {
+        baselineHits[index] = hit;
+      }
+    });
   }
 
   const innerCandidates = samples.map((sample, index) => {
-    const base = baselineSamples[index % baselineSamples.length] ?? baselineSamples[0] ?? sample.position;
-    const outward = normalize({
-      x: sample.position.x - base.x,
-      y: sample.position.y - base.y,
-    });
-    const direction = outward.x === 0 && outward.y === 0 ? fallbackDirection(sample) : outward;
+    const base = baselineHits[index]?.point ?? initialBaseline[index];
     const extra = Math.max(0, sample.thickness - baselineThickness);
     return {
-      x: base.x - direction.x * extra,
-      y: base.y - direction.y * extra,
+      x: base.x - directions[index].x * extra,
+      y: base.y - directions[index].y * extra,
     };
   });
 
@@ -314,19 +349,134 @@ const deriveInnerGeometry = (
     return { innerSamples: innerCandidates, polygons: [] };
   }
 
-  if (innerCandidates.length < 3) {
-    return { innerSamples: innerCandidates, polygons: [] };
+  if (!baselinePolygons.length || innerCandidates.length < 3) {
+    const polygons = cleanAndSimplifyPolygons(innerCandidates);
+    if (!polygons.length) {
+      return { innerSamples: innerCandidates, polygons: [] };
+    }
+    const primary = polygons.reduce((largest, poly) =>
+      Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
+    polygons[0]);
+    const resampled = resampleClosedPolygon(primary, samples.length);
+    return { innerSamples: resampled.length ? resampled : innerCandidates, polygons };
   }
 
-  const polygons = cleanAndSimplifyPolygons(innerCandidates);
-  if (!polygons.length) {
-    return { innerSamples: innerCandidates, polygons: [] };
-  }
-  const primary = polygons.reduce((largest, poly) =>
-    Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
-  polygons[0]);
-  const resampled = resampleClosedPolygon(primary, samples.length);
-  return { innerSamples: resampled.length ? resampled : innerCandidates, polygons };
+  const distanceToSegment = (point: Vec2, a: Vec2, b: Vec2): number => {
+    const ab = { x: b.x - a.x, y: b.y - a.y };
+    const ap = { x: point.x - a.x, y: point.y - a.y };
+    const abLenSq = ab.x * ab.x + ab.y * ab.y;
+    if (abLenSq === 0) {
+      return distance(point, a);
+    }
+    const t = Math.max(0, Math.min(1, (ap.x * ab.x + ap.y * ab.y) / abLenSq));
+    const closestPoint = { x: a.x + ab.x * t, y: a.y + ab.y * t };
+    return distance(point, closestPoint);
+  };
+
+  const distanceToPolygon = (point: Vec2, polygon: Vec2[]): number => {
+    if (!polygon.length) return Infinity;
+    let min = Infinity;
+    for (let i = 0; i < polygon.length; i += 1) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % polygon.length];
+      min = Math.min(min, distanceToSegment(point, a, b));
+    }
+    return min;
+  };
+
+  const rotateLoop = (loop: Vec2[], offset: number): Vec2[] => {
+    const normalisedOffset = ((offset % loop.length) + loop.length) % loop.length;
+    return loop.map((_, idx) => loop[(idx + normalisedOffset) % loop.length]);
+  };
+
+  const alignLoopToAnchors = (loop: Vec2[], anchors: Vec2[]): Vec2[] => {
+    if (loop.length !== anchors.length || !loop.length) {
+      return loop;
+    }
+    let best = loop;
+    let bestScore = Infinity;
+
+    const evaluate = (candidate: Vec2[]): number =>
+      candidate.reduce((acc, point, idx) => acc + distance(point, anchors[idx]) ** 2, 0);
+
+    const orientations: Vec2[][] = [loop, [...loop].reverse()];
+    orientations.forEach((orientation) => {
+      for (let offset = 0; offset < orientation.length; offset += 1) {
+        const candidate = rotateLoop(orientation, offset);
+        const score = evaluate(candidate);
+        if (score < bestScore) {
+          bestScore = score;
+          best = candidate;
+        }
+      }
+    });
+    return best;
+  };
+
+  const groupedByPolygon = new Map<number, { indices: number[]; anchors: Vec2[] }>();
+  baselineHits.forEach((hit, index) => {
+    if (hit.polygonIndex < 0) {
+      return;
+    }
+    const existing = groupedByPolygon.get(hit.polygonIndex);
+    const entry = existing ?? { indices: [], anchors: [] };
+    entry.indices.push(index);
+    entry.anchors.push(innerCandidates[index]);
+    groupedByPolygon.set(hit.polygonIndex, entry);
+  });
+
+  const finalSamples = [...innerCandidates];
+  const finalPolygons: Vec2[][] = [];
+
+  groupedByPolygon.forEach((group) => {
+    if (!group.indices.length) {
+      return;
+    }
+    const candidateLoop = group.anchors;
+    const cleaned = cleanAndSimplifyPolygons(candidateLoop);
+    const loops = cleaned.length ? cleaned : [candidateLoop];
+    const assignments = loops.map(() => ({ indices: [] as number[], anchors: [] as Vec2[] }));
+
+    group.indices.forEach((sampleIndex, localIndex) => {
+      const anchor = group.anchors[localIndex];
+      let bestLoop = 0;
+      let bestDistance = Infinity;
+      loops.forEach((loop, loopIndex) => {
+        const d = distanceToPolygon(anchor, loop);
+        if (d < bestDistance) {
+          bestDistance = d;
+          bestLoop = loopIndex;
+        }
+      });
+      assignments[bestLoop].indices.push(sampleIndex);
+      assignments[bestLoop].anchors.push(anchor);
+    });
+
+    assignments.forEach((assignment, loopIndex) => {
+      const loop = loops[loopIndex];
+      if (!assignment.indices.length) {
+        finalPolygons.push(loop);
+        return;
+      }
+      const count = assignment.anchors.length;
+      let alignedLoop: Vec2[];
+      if (count >= 3) {
+        const resampled = resampleClosedPolygon(loop, count);
+        alignedLoop =
+          resampled.length === count
+            ? alignLoopToAnchors(resampled, assignment.anchors)
+            : assignment.anchors.map((pt) => ({ ...pt }));
+      } else {
+        alignedLoop = assignment.anchors.map((pt) => ({ ...pt }));
+      }
+      assignment.indices.forEach((sampleIndex, localIdx) => {
+        finalSamples[sampleIndex] = alignedLoop[localIdx] ?? finalSamples[sampleIndex];
+      });
+      finalPolygons.push(alignedLoop.length ? alignedLoop : loop);
+    });
+  });
+
+  return { innerSamples: finalSamples, polygons: finalPolygons };
 };
 
 
