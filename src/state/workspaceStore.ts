@@ -14,6 +14,7 @@ import type {
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
+import type { ThicknessOptions } from '../geometry/thickness';
 import { createId } from '../utils/ids';
 import {
   adaptiveSamplePath,
@@ -24,7 +25,8 @@ import {
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
-import { add, alignLoop, clamp, distance, dot, sub } from '../utils/math';
+import { laplacianSmooth } from '../geometry/smoothing';
+import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -104,14 +106,14 @@ const persistLibrary = (library: StoredShape[]): void => {
 
 const createDefaultDirectionWeights = (): DirectionWeight[] =>
   sanitizeDirectionalWeights([
-    createDirectionalWeight('N', 270),
-    createDirectionalWeight('NE', 315),
     createDirectionalWeight('E', 0),
-    createDirectionalWeight('SE', 45),
-    createDirectionalWeight('S', 90),
-    createDirectionalWeight('SW', 135),
+    createDirectionalWeight('NE', 45),
+    createDirectionalWeight('N', 90),
+    createDirectionalWeight('NW', 135),
     createDirectionalWeight('W', 180),
-    createDirectionalWeight('NW', 225),
+    createDirectionalWeight('SW', 225),
+    createDirectionalWeight('S', 270),
+    createDirectionalWeight('SE', 315),
   ]);
 
 const createDefaultOxidation = (): OxidationSettings => ({
@@ -213,6 +215,7 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
+  thicknessOptions: ThicknessOptions,
 ): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
   const fallbackInner = samples.map((sample) => ({
     x: sample.position.x - sample.normal.x * sample.thickness,
@@ -222,6 +225,9 @@ const deriveInnerGeometry = (
   if (!closed || samples.length < 3) {
     return { innerSamples: fallbackInner, polygons: [] };
   }
+
+  const defaultResolution = Math.min(0.5, thicknessOptions.uniformThickness / 4);
+  const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
 
   const TAU = Math.PI * 2;
   const EPS = 1e-6;
@@ -429,29 +435,16 @@ const deriveInnerGeometry = (
     return candidate;
   });
 
-  const laplacianSmooth = (points: Vec2[], iterations = 3, lambda = 0.25): Vec2[] => {
-    if (points.length < 3) return points;
-    let current = points.map((p) => ({ ...p }));
-    for (let iter = 0; iter < iterations; iter += 1) {
-      const next = current.map((point, i) => {
-        const prev = current[(i - 1 + current.length) % current.length];
-        const nextPoint = current[(i + 1) % current.length];
-        const laplace = add(prev, nextPoint);
-        return {
-          x: point.x + lambda * (laplace.x / 2 - point.x),
-          y: point.y + lambda * (laplace.y / 2 - point.y),
-        };
-      });
-      current = next;
-    }
-    return current;
-  };
-
-  const smoothed = laplacianSmooth(candidateInner);
+  const smoothingAlpha = Math.min(0.3, Math.max(0.1, resolution * 0.6));
+  const smoothingIterations = resolution <= 0.2 ? 2 : 1;
+  const smoothed = laplacianSmooth(candidateInner, smoothingAlpha, smoothingIterations, {
+    closed: true,
+  });
 
   let polygons: Vec2[][] = [];
   if (smoothed.length >= 3) {
-    polygons = cleanAndSimplifyPolygons(smoothed);
+    const cleaningTolerance = Math.max(resolution * 2, 0.05);
+    polygons = cleanAndSimplifyPolygons(smoothed, cleaningTolerance);
   }
   if (!polygons.length && smoothed.length >= 3) {
     polygons = [smoothed];
@@ -600,14 +593,19 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     spacing: path.oxidation.evaluationSpacing,
   });
   const normals = recomputeNormals(sampled.samples);
-  const withThickness = evalThickness(normals, {
+  const thicknessOptions: ThicknessOptions = {
     uniformThickness: path.oxidation.thicknessUniformUm,
     weights: path.oxidation.thicknessByDirection.items,
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
     progress,
-  });
+  };
+  const withThickness = evalThickness(normals, thicknessOptions);
 
-  const { innerSamples, polygons } = deriveInnerGeometry(withThickness, path.meta.closed);
+  const { innerSamples, polygons } = deriveInnerGeometry(
+    withThickness,
+    path.meta.closed,
+    thicknessOptions,
+  );
   const length = accumulateLength(withThickness);
   return {
     ...path,

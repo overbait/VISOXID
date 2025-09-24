@@ -28,14 +28,26 @@ export const smoothSamples = (
   return result;
 };
 
-export const laplacianSmooth = (points: Vec2[], alpha: number, iterations: number): Vec2[] => {
+interface LaplacianOptions {
+  closed?: boolean;
+}
+
+export const laplacianSmooth = (
+  points: Vec2[],
+  alpha: number,
+  iterations: number,
+  options: LaplacianOptions = {},
+): Vec2[] => {
   if (points.length < 3) return points;
+  const { closed = false } = options;
   let result = points.map((p) => ({ ...p }));
   for (let iter = 0; iter < iterations; iter += 1) {
     const next = result.map((point, i) => {
-      if (i === 0 || i === result.length - 1) return point;
-      const prev = result[i - 1];
-      const nextPoint = result[i + 1];
+      if (!closed && (i === 0 || i === result.length - 1)) return point;
+      const prevIndex = i === 0 ? (closed ? result.length - 1 : i) : i - 1;
+      const nextIndex = i === result.length - 1 ? (closed ? 0 : i) : i + 1;
+      const prev = result[prevIndex];
+      const nextPoint = result[nextIndex];
       const average = scale(add(prev, nextPoint), 0.5);
       return add(point, scale(sub(average, point), alpha));
     });

@@ -1,5 +1,5 @@
 import type { SamplePoint } from '../types';
-import { add, normalize } from '../utils/math';
+import { add, normalize, scale } from '../utils/math';
 
 export const recomputeNormals = (samples: SamplePoint[], window = 2): SamplePoint[] => {
   if (!samples.length) return samples;
@@ -15,6 +15,35 @@ export const recomputeNormals = (samples: SamplePoint[], window = 2): SamplePoin
     result[i].tangent = averaged;
     result[i].normal = { x: -averaged.y, y: averaged.x };
   }
+
+  const start = samples[0].position;
+  const end = samples[samples.length - 1].position;
+  const closingDistanceSq = (start.x - end.x) ** 2 + (start.y - end.y) ** 2;
+  const isClosed = closingDistanceSq < 1e-6;
+  if (!isClosed) {
+    return result;
+  }
+
+  const centroid = scale(
+    samples.reduce((acc, sample) => add(acc, sample.position), { x: 0, y: 0 }),
+    1 / samples.length,
+  );
+
+  let normalAlignment = 0;
+  for (const sample of result) {
+    const toSample = {
+      x: sample.position.x - centroid.x,
+      y: sample.position.y - centroid.y,
+    };
+    normalAlignment += sample.normal.x * toSample.x + sample.normal.y * toSample.y;
+  }
+
+  if (normalAlignment < 0) {
+    for (const sample of result) {
+      sample.normal = { x: -sample.normal.x, y: -sample.normal.y };
+    }
+  }
+
   return result;
 };
 

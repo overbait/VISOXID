@@ -81,3 +81,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `deriveInnerGeometry` now builds the oxide interior using a variable-radius power diagram instead of rasterised SDF marching squares. Each boundary sample contributes a circle with its local thickness; visible arcs define the offset envelope.
 - The helper filters arcs to the inward half-space so compass headings (“N”, “E”, …) map to the expected directions after evaluating normals.
 - A small Laplacian smoothing pass post-processes the sampled loop to remove stair-steps before cleaning/resampling. Preserve this order if you refine the algorithm.
+
+## 2025-10-11 — Normal orientation & adaptive oxide resolution
+
+- `recomputeNormals` now flips averaged normals that point inward on closed loops using a centroid alignment check. Do not remove this guard—directional weights assume outward-facing normals.
+- The compass defaults map `E/N/W/S` to `0°/90°/180°/270°` so UI spokes match world-space directions. Keep this ordering when seeding new headings.
+- `ThicknessOptions` gained an optional `resolution` that defaults to `min(0.5, uniformThickness / 4)`. `deriveInnerGeometry` uses it for cleaning tolerance and picks between one or two Laplacian smoothing iterations via `laplacianSmooth(..., { closed: true })`.

@@ -5,6 +5,7 @@ export interface ThicknessOptions {
   weights: DirectionWeight[];
   mirrorSymmetry?: boolean;
   progress?: number;
+  resolution?: number;
 }
 
 interface NormalizedWeight {
