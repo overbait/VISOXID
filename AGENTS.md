@@ -120,3 +120,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `deriveInnerGeometry` now seeds the inner loop from a Clipper “round” inset built with the uniform thickness before re-aligning samples. Keep the `computeOffset(..., { delta: -uniformThickness })` call so sharp corners render as circular fillets instead of collapsing into triangles.
 - The inset polygon only serves as the projection reference—the final per-sample points are still obtained by raycasting along each inward normal and clamping to at least the requested (uniform + directional) thickness. Do not remove the `enforceMinimumOffset` raycast.
 - Cleaning runs on the projected loop itself; if it self-intersects we resample the dominant polygon back onto the sample indices before re-projecting. Preserve this ordering so measurement probes stay paired with their outer samples.
+
+## 2025-10-18 — SDF iso-contour reconstruction
+
+- `deriveInnerGeometry` now samples an SDF grid of the outer loop (via `sdf-polygon-2d`) and extracts the zero contour of `distance - thickness(angle)` using `marching-squares`. This iso-contour seeds the inner loop prior to smoothing/resampling—keep the march in place so directional weight tweaks immediately affect the field.
+- Expand the sampled bounds by the maximum requested thickness plus a small margin tied to `thicknessOptions.resolution`; otherwise the iso loop can clip at the grid edge.
+- The marched contour is still re-aligned to the outer samples and pushed through the minimum-thickness raycast. Preserve this enforcement so measurement probes honour the configured oxide floor even if the iso field under-shoots in tight corners.

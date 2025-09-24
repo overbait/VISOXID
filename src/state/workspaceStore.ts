@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { isoLines } from 'marching-squares';
+import polygonSdf from 'sdf-polygon-2d';
 import type {
   DirectionWeight,
   MeasurementProbe,
@@ -22,6 +24,7 @@ import {
   cleanAndSimplifyPolygons,
   computeOffset,
   evalThickness,
+  evalThicknessForAngle,
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
@@ -223,18 +226,27 @@ const deriveInnerGeometry = (
     y: sample.position.y - sample.normal.y * sample.thickness,
   }));
 
-  const outerLoop = samples.map((sample) => sample.position);
-  const outerArea = polygonArea(outerLoop);
-  const orientationSign = outerArea >= 0 ? 1 : -1;
-
   if (!closed || samples.length < 3) {
     return { innerSamples: fallbackInner, polygons: [] };
   }
 
+  const outerLoop = samples.map((sample) => sample.position);
+  const outerArea = polygonArea(outerLoop);
+  const orientationSign = outerArea >= 0 ? 1 : -1;
+
   const defaultResolution = Math.min(0.5, thicknessOptions.uniformThickness / 4);
   const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
-
   const EPS = 1e-6;
+
+  const stripDuplicateClosingPoint = (loop: Vec2[]): Vec2[] => {
+    if (loop.length < 2) return loop;
+    const first = loop[0];
+    const last = loop.at(-1)!;
+    if (Math.hypot(first.x - last.x, first.y - last.y) <= EPS) {
+      return loop.slice(0, -1);
+    }
+    return loop;
+  };
 
   const selectPrimaryLoop = (loops: Vec2[][]): Vec2[] | null => {
     let best: { area: number; loop: Vec2[] } | null = null;
@@ -252,16 +264,6 @@ const deriveInnerGeometry = (
     return best ? best.loop : null;
   };
 
-  const stripDuplicateClosingPoint = (loop: Vec2[]): Vec2[] => {
-    if (loop.length < 2) return loop;
-    const first = loop[0];
-    const last = loop.at(-1)!;
-    if (Math.hypot(first.x - last.x, first.y - last.y) <= EPS) {
-      return loop.slice(0, -1);
-    }
-    return loop;
-  };
-
   const uniformThickness = Math.max(thicknessOptions.uniformThickness, 0);
   let baselineLoop: Vec2[] | null = null;
 
@@ -275,18 +277,101 @@ const deriveInnerGeometry = (
     baselineLoop = selectPrimaryLoop(stripped);
   }
 
-  let seededLoop: Vec2[] = baselineLoop ?? fallbackInner;
+  const centroid = samples.reduce(
+    (acc, sample) => ({ x: acc.x + sample.position.x, y: acc.y + sample.position.y }),
+    { x: 0, y: 0 },
+  );
+  centroid.x /= samples.length;
+  centroid.y /= samples.length;
 
-  if (baselineLoop && baselineLoop.length >= 3 && samples.length >= 3) {
-    const resampled = resampleClosedPolygon(baselineLoop, samples.length);
-    if (resampled.length === samples.length) {
-      seededLoop = alignLoop(resampled, fallbackInner);
-    } else {
-      seededLoop = alignLoop(fallbackInner, fallbackInner);
+  const maxThickness = samples.reduce(
+    (max, sample) => Math.max(max, Math.max(sample.thickness, 0)),
+    0,
+  );
+
+  const bounds = outerLoop.reduce(
+    (acc, point) => ({
+      minX: Math.min(acc.minX, point.x),
+      maxX: Math.max(acc.maxX, point.x),
+      minY: Math.min(acc.minY, point.y),
+      maxY: Math.max(acc.maxY, point.y),
+    }),
+    {
+      minX: outerLoop[0].x,
+      maxX: outerLoop[0].x,
+      minY: outerLoop[0].y,
+      maxY: outerLoop[0].y,
+    },
+  );
+
+  const margin = Math.max(maxThickness + resolution * 4, resolution * 6);
+  const minX = bounds.minX - margin;
+  const maxX = bounds.maxX + margin;
+  const minY = bounds.minY - margin;
+  const maxY = bounds.maxY + margin;
+
+  const step = resolution;
+  const cols = Math.max(2, Math.ceil((maxX - minX) / step) + 1);
+  const rows = Math.max(2, Math.ceil((maxY - minY) / step) + 1);
+
+  const sdf = polygonSdf([
+    outerLoop.map((point) => [point.x, point.y]),
+  ]);
+
+  const sampleField = (): number[][] => {
+    const field: number[][] = new Array(rows);
+    const gradientStep = step;
+    for (let row = 0; row < rows; row += 1) {
+      const y = minY + row * step;
+      const rowValues = new Array<number>(cols);
+      for (let col = 0; col < cols; col += 1) {
+        const x = minX + col * step;
+        const distance = sdf(x, y);
+
+        if (distance <= 0) {
+          rowValues[col] = distance - maxThickness;
+          continue;
+        }
+
+        const dx = (sdf(x + gradientStep, y) - sdf(x - gradientStep, y)) / (2 * gradientStep);
+        const dy = (sdf(x, y + gradientStep) - sdf(x, y - gradientStep)) / (2 * gradientStep);
+        let normal = normalize({ x: dx, y: dy });
+        if (Math.abs(normal.x) + Math.abs(normal.y) <= EPS) {
+          normal = normalize({ x: x - centroid.x, y: y - centroid.y });
+        }
+        const angle = Math.atan2(normal.y, normal.x);
+        const desiredThickness = evalThicknessForAngle(angle, thicknessOptions);
+        rowValues[col] = distance - desiredThickness;
+      }
+      field[row] = rowValues;
     }
-  } else if (samples.length >= 3) {
-    seededLoop = fallbackInner;
+    return field;
+  };
+
+  const field = sampleField();
+  const isoResult = isoLines(field, [0], { noFrame: true });
+  const isoLoops = isoResult
+    .flat()
+    .map((loop) =>
+      stripDuplicateClosingPoint(
+        loop.map(([cx, cy]) => ({
+          x: minX + cx * step,
+          y: minY + cy * step,
+        })),
+      ),
+    )
+    .filter((loop) => loop.length >= 3);
+
+  const candidateLoops: Vec2[][] = [];
+  if (isoLoops.length) {
+    candidateLoops.push(...isoLoops);
   }
+  if (baselineLoop && baselineLoop.length >= 3) {
+    candidateLoops.push(baselineLoop);
+  }
+
+  const primaryLoop = selectPrimaryLoop(candidateLoops);
+  const seededLoop = primaryLoop ?? fallbackInner;
 
   const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
 
@@ -353,14 +438,24 @@ const deriveInnerGeometry = (
     });
   };
 
+  const resampledSeed =
+    seededLoop.length >= 3
+      ? resampleClosedPolygon(seededLoop, samples.length)
+      : fallbackInner;
+
+  const alignedSeed =
+    resampledSeed.length === samples.length
+      ? alignLoop(resampledSeed, fallbackInner)
+      : alignLoop(fallbackInner, fallbackInner);
+
   const smoothingAlpha = Math.min(0.2, Math.max(0.05, resolution * 0.4));
   const smoothingIterations = resolution <= 0.2 ? 2 : 1;
-  const smoothed = laplacianSmooth(seededLoop, smoothingAlpha, smoothingIterations, {
+  const smoothed = laplacianSmooth(alignedSeed, smoothingAlpha, smoothingIterations, {
     closed: true,
   });
   const alignedSmooth = alignLoop(smoothed, fallbackInner);
 
-  const projectionLoop = baselineLoop && baselineLoop.length >= 3 ? baselineLoop : alignedSmooth;
+  const projectionLoop = primaryLoop && primaryLoop.length >= 3 ? primaryLoop : alignedSmooth;
   const enforced = enforceMinimumOffset(alignedSmooth, projectionLoop);
 
   const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
