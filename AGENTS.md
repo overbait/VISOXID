@@ -126,3 +126,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `deriveInnerGeometry` now samples an SDF grid of the outer loop (via `sdf-polygon-2d`) and extracts the zero contour of `distance - thickness(angle)` using `marching-squares`. This iso-contour seeds the inner loop prior to smoothing/resampling—keep the march in place so directional weight tweaks immediately affect the field.
 - Expand the sampled bounds by the maximum requested thickness plus a small margin tied to `thicknessOptions.resolution`; otherwise the iso loop can clip at the grid edge.
 - The marched contour is still re-aligned to the outer samples and pushed through the minimum-thickness raycast. Preserve this enforcement so measurement probes honour the configured oxide floor even if the iso field under-shoots in tight corners.
+
+## 2025-10-19 — SDF outer loop sanitisation
+
+- `deriveInnerGeometry` strips duplicated closing samples and sequential near-duplicates from the outer loop before instantiating `polygonSdf`. Leave this guard intact; zero-length edges from duplicate samples trigger NaNs inside the SDF implementation.
+- When sampling the scalar field, non-finite evaluations are clamped to the uniform-thickness floor so the marching-squares pass keeps running instead of crashing the app.

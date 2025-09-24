@@ -230,10 +230,6 @@ const deriveInnerGeometry = (
     return { innerSamples: fallbackInner, polygons: [] };
   }
 
-  const outerLoop = samples.map((sample) => sample.position);
-  const outerArea = polygonArea(outerLoop);
-  const orientationSign = outerArea >= 0 ? 1 : -1;
-
   const defaultResolution = Math.min(0.5, thicknessOptions.uniformThickness / 4);
   const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
   const EPS = 1e-6;
@@ -247,6 +243,39 @@ const deriveInnerGeometry = (
     }
     return loop;
   };
+
+  const dedupeSequentialPoints = (loop: Vec2[], tolerance = EPS): Vec2[] => {
+    if (loop.length < 2) return loop;
+    const deduped: Vec2[] = [];
+    for (const point of loop) {
+      const previous = deduped.at(-1);
+      if (
+        previous &&
+        Math.abs(previous.x - point.x) <= tolerance &&
+        Math.abs(previous.y - point.y) <= tolerance
+      ) {
+        continue;
+      }
+      deduped.push(point);
+    }
+    if (deduped.length >= 2) {
+      const first = deduped[0];
+      const last = deduped.at(-1)!;
+      if (Math.abs(first.x - last.x) <= tolerance && Math.abs(first.y - last.y) <= tolerance) {
+        deduped.pop();
+      }
+    }
+    return deduped;
+  };
+
+  const outerLoopRaw = samples.map((sample) => sample.position);
+  const outerLoop = dedupeSequentialPoints(stripDuplicateClosingPoint(outerLoopRaw));
+  if (outerLoop.length < 3) {
+    return { innerSamples: fallbackInner, polygons: [] };
+  }
+
+  const outerArea = polygonArea(outerLoop);
+  const orientationSign = outerArea >= 0 ? 1 : -1;
 
   const selectPrimaryLoop = (loops: Vec2[][]): Vec2[] | null => {
     let best: { area: number; loop: Vec2[] } | null = null;
@@ -327,6 +356,10 @@ const deriveInnerGeometry = (
       for (let col = 0; col < cols; col += 1) {
         const x = minX + col * step;
         const distance = sdf(x, y);
+        if (!Number.isFinite(distance)) {
+          rowValues[col] = -maxThickness;
+          continue;
+        }
 
         if (distance <= 0) {
           rowValues[col] = distance - maxThickness;
