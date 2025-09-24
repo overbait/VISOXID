@@ -19,13 +19,15 @@ import {
   adaptiveSamplePath,
   accumulateLength,
   cleanAndSimplifyPolygons,
-  computeOffset,
   evalThickness,
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
-import { clamp, distance, normalize } from '../utils/math';
+import { clamp, distance, normalize, alignLoop } from '../utils/math';
+import createSDF from 'sdf-polygon-2d';
+import { isoLines } from 'marching-squares';
+import { evalThicknessForAngle, type ThicknessOptions } from '../geometry/thickness';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -211,272 +213,104 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
   });
 };
 
-const computeCentroid = (points: Vec2[]): Vec2 => {
-  if (!points.length) {
-    return { x: 0, y: 0 };
-  }
-  let areaAcc = 0;
-  let cxAcc = 0;
-  let cyAcc = 0;
-  for (let i = 0; i < points.length; i += 1) {
-    const current = points[i];
-    const next = points[(i + 1) % points.length];
-    const cross = current.x * next.y - next.x * current.y;
-    areaAcc += cross;
-    cxAcc += (current.x + next.x) * cross;
-    cyAcc += (current.y + next.y) * cross;
-  }
-  const area = areaAcc / 2;
-  if (Math.abs(area) < 1e-6) {
-    const sum = points.reduce(
-      (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
-      { x: 0, y: 0 },
-    );
-    return { x: sum.x / points.length, y: sum.y / points.length };
-  }
-  const factor = 1 / (6 * area);
-  return { x: cxAcc * factor, y: cyAcc * factor };
-};
-
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
-  centroid: Vec2,
+  thicknessOptions: ThicknessOptions,
 ): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
-  if (!samples.length) {
+  if (!closed || samples.length < 3) {
+    const innerSamples = samples.map((sample) => ({
+      x: sample.position.x - sample.normal.x * sample.thickness,
+      y: sample.position.y - sample.normal.y * sample.thickness,
+    }));
+    return { innerSamples, polygons: [] };
+  }
+
+  const padding = 15;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sample of samples) {
+    minX = Math.min(minX, sample.position.x);
+    minY = Math.min(minY, sample.position.y);
+    maxX = Math.max(maxX, sample.position.x);
+    maxY = Math.max(maxY, sample.position.y);
+  }
+  minX -= padding;
+  minY -= padding;
+  maxX += padding;
+  maxY += padding;
+
+  const outerPolygon = samples.map((s) => [s.position.x, s.position.y]);
+  const sdf = createSDF([outerPolygon]);
+
+  const resolution = 0.5;
+  const gridWidth = Math.ceil((maxX - minX) / resolution);
+  const gridHeight = Math.ceil((maxY - minY) / resolution);
+  const scalarField: number[][] = Array.from({ length: gridHeight }, () => Array(gridWidth).fill(0));
+
+  const h = 0.5;
+
+  for (let gy = 0; gy < gridHeight; gy++) {
+    for (let gx = 0; gx < gridWidth; gx++) {
+      const worldX = minX + gx * resolution;
+      const worldY = minY + gy * resolution;
+
+      const sdfValue = sdf(worldX, worldY);
+
+      const gradX = sdf(worldX + h, worldY) - sdf(worldX - h, worldY);
+      const gradY = sdf(worldX, worldY + h) - sdf(worldX, worldY - h);
+      const gradient = normalize({ x: gradX, y: gradY });
+
+      // If the gradient has zero length, normalize() will produce NaN.
+      // This can happen if the SDF is flat at the evaluation point.
+      // In this case, we can skip this grid point.
+      if (Number.isNaN(gradient.x)) {
+        scalarField[gy][gx] = 0;
+        continue;
+      }
+
+      const normalAngle = Math.atan2(gradient.y, gradient.x);
+
+      const inwardNormalAngle = normalAngle + Math.PI;
+      const targetThickness = evalThicknessForAngle(inwardNormalAngle, thicknessOptions);
+
+      scalarField[gy][gx] = sdfValue + targetThickness;
+    }
+  }
+
+  const rawContours = isoLines(scalarField, [0], { noQuadTree: true })[0] ?? [];
+
+  const toWorld = ([px, py]: [number, number]): Vec2 => ({
+    x: minX + px * resolution,
+    y: minY + py * resolution,
+  });
+
+  const polygons = rawContours.flatMap((ring) => {
+    const worldRing = ring.map(toWorld);
+    const cleaned = cleanAndSimplifyPolygons(worldRing);
+    return cleaned.length ? cleaned : [worldRing];
+  });
+
+  if (!polygons.length) {
     return { innerSamples: [], polygons: [] };
   }
 
-  const fallbackDirection = (sample: SamplePoint): Vec2 => {
-    const normalDir = normalize(sample.normal);
-    if (normalDir.x !== 0 || normalDir.y !== 0) {
-      return normalDir;
-    }
-    const radial = normalize({
-      x: sample.position.x - centroid.x,
-      y: sample.position.y - centroid.y,
-    });
-    if (radial.x !== 0 || radial.y !== 0) {
-      return radial;
-    }
-    return { x: 0, y: -1 };
-  };
+  const primaryPolygon = polygons.reduce((largest, poly) =>
+    Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
+  polygons[0]);
 
-  const directions = samples.map((sample) => fallbackDirection(sample));
-  const thicknessValues = samples.map((sample) => sample.thickness);
-  const baselineThickness = Math.max(Math.min(...thicknessValues), 0);
+  if (primaryPolygon.length < 3) {
+    return { innerSamples: [], polygons: polygons };
+  }
 
-  const initialBaseline = samples.map((sample, index) => ({
-    x: sample.position.x - directions[index].x * baselineThickness,
-    y: sample.position.y - directions[index].y * baselineThickness,
+  const rawInnerPoints = samples.map((sample) => ({
+    x: sample.position.x - sample.normal.x * sample.thickness,
+    y: sample.position.y - sample.normal.y * sample.thickness,
   }));
 
-  const baselinePolygons =
-    closed && baselineThickness > 0
-      ? computeOffset(samples.map((sample) => sample.position), {
-          delta: -baselineThickness,
-          joinStyle: 'round',
-          miterLimit: 6,
-        }).filter((polygon) => polygon.length >= 3)
-      : [];
+  const resampled = resampleClosedPolygon(primaryPolygon, samples.length);
+  const innerSamples = alignLoop(resampled, rawInnerPoints);
 
-  type BaselineHit = { point: Vec2; polygonIndex: number };
-  const baselineHits: BaselineHit[] = initialBaseline.map((point) => ({
-    point,
-    polygonIndex: -1,
-  }));
-
-  const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
-
-  const projectRayOntoPolygon = (origin: Vec2, inward: Vec2): BaselineHit | null => {
-    const EPS = 1e-6;
-    let closest: BaselineHit | null = null;
-    let closestDistance = Infinity;
-
-    baselinePolygons.forEach((polygon, polygonIndex) => {
-      for (let i = 0; i < polygon.length; i += 1) {
-        const a = polygon[i];
-        const b = polygon[(i + 1) % polygon.length];
-        const edge = { x: b.x - a.x, y: b.y - a.y };
-        const denom = cross(inward, edge);
-        if (Math.abs(denom) < EPS) {
-          continue;
-        }
-        const diff = { x: a.x - origin.x, y: a.y - origin.y };
-        const t = cross(diff, edge) / denom;
-        const u = cross(diff, inward) / denom;
-        if (t < -EPS || u < -EPS || u > 1 + EPS) {
-          continue;
-        }
-        const distanceAlongRay = t < 0 ? 0 : t;
-        if (distanceAlongRay < closestDistance) {
-          const point = {
-            x: origin.x + inward.x * distanceAlongRay,
-            y: origin.y + inward.y * distanceAlongRay,
-          };
-          closestDistance = distanceAlongRay;
-          closest = { point, polygonIndex };
-        }
-      }
-    });
-
-    return closest;
-  };
-
-  if (baselinePolygons.length) {
-    samples.forEach((sample, index) => {
-      const inward = { x: -directions[index].x, y: -directions[index].y };
-      if (inward.x === 0 && inward.y === 0) {
-        return;
-      }
-      const hit = projectRayOntoPolygon(sample.position, inward);
-      if (hit) {
-        baselineHits[index] = hit;
-      }
-    });
-  }
-
-  const innerCandidates = samples.map((sample, index) => {
-    const base = baselineHits[index]?.point ?? initialBaseline[index];
-    const extra = Math.max(0, sample.thickness - baselineThickness);
-    return {
-      x: base.x - directions[index].x * extra,
-      y: base.y - directions[index].y * extra,
-    };
-  });
-
-  if (!closed) {
-    return { innerSamples: innerCandidates, polygons: [] };
-  }
-
-  if (!baselinePolygons.length || innerCandidates.length < 3) {
-    const polygons = cleanAndSimplifyPolygons(innerCandidates);
-    if (!polygons.length) {
-      return { innerSamples: innerCandidates, polygons: [] };
-    }
-    const primary = polygons.reduce((largest, poly) =>
-      Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
-    polygons[0]);
-    const resampled = resampleClosedPolygon(primary, samples.length);
-    return { innerSamples: resampled.length ? resampled : innerCandidates, polygons };
-  }
-
-  const distanceToSegment = (point: Vec2, a: Vec2, b: Vec2): number => {
-    const ab = { x: b.x - a.x, y: b.y - a.y };
-    const ap = { x: point.x - a.x, y: point.y - a.y };
-    const abLenSq = ab.x * ab.x + ab.y * ab.y;
-    if (abLenSq === 0) {
-      return distance(point, a);
-    }
-    const t = Math.max(0, Math.min(1, (ap.x * ab.x + ap.y * ab.y) / abLenSq));
-    const closestPoint = { x: a.x + ab.x * t, y: a.y + ab.y * t };
-    return distance(point, closestPoint);
-  };
-
-  const distanceToPolygon = (point: Vec2, polygon: Vec2[]): number => {
-    if (!polygon.length) return Infinity;
-    let min = Infinity;
-    for (let i = 0; i < polygon.length; i += 1) {
-      const a = polygon[i];
-      const b = polygon[(i + 1) % polygon.length];
-      min = Math.min(min, distanceToSegment(point, a, b));
-    }
-    return min;
-  };
-
-  const rotateLoop = (loop: Vec2[], offset: number): Vec2[] => {
-    const normalisedOffset = ((offset % loop.length) + loop.length) % loop.length;
-    return loop.map((_, idx) => loop[(idx + normalisedOffset) % loop.length]);
-  };
-
-  const alignLoopToAnchors = (loop: Vec2[], anchors: Vec2[]): Vec2[] => {
-    if (loop.length !== anchors.length || !loop.length) {
-      return loop;
-    }
-    let best = loop;
-    let bestScore = Infinity;
-
-    const evaluate = (candidate: Vec2[]): number =>
-      candidate.reduce((acc, point, idx) => acc + distance(point, anchors[idx]) ** 2, 0);
-
-    const orientations: Vec2[][] = [loop, [...loop].reverse()];
-    orientations.forEach((orientation) => {
-      for (let offset = 0; offset < orientation.length; offset += 1) {
-        const candidate = rotateLoop(orientation, offset);
-        const score = evaluate(candidate);
-        if (score < bestScore) {
-          bestScore = score;
-          best = candidate;
-        }
-      }
-    });
-    return best;
-  };
-
-  const groupedByPolygon = new Map<number, { indices: number[]; anchors: Vec2[] }>();
-  baselineHits.forEach((hit, index) => {
-    if (hit.polygonIndex < 0) {
-      return;
-    }
-    const existing = groupedByPolygon.get(hit.polygonIndex);
-    const entry = existing ?? { indices: [], anchors: [] };
-    entry.indices.push(index);
-    entry.anchors.push(innerCandidates[index]);
-    groupedByPolygon.set(hit.polygonIndex, entry);
-  });
-
-  const finalSamples = [...innerCandidates];
-  const finalPolygons: Vec2[][] = [];
-
-  groupedByPolygon.forEach((group) => {
-    if (!group.indices.length) {
-      return;
-    }
-    const candidateLoop = group.anchors;
-    const cleaned = cleanAndSimplifyPolygons(candidateLoop);
-    const loops = cleaned.length ? cleaned : [candidateLoop];
-    const assignments = loops.map(() => ({ indices: [] as number[], anchors: [] as Vec2[] }));
-
-    group.indices.forEach((sampleIndex, localIndex) => {
-      const anchor = group.anchors[localIndex];
-      let bestLoop = 0;
-      let bestDistance = Infinity;
-      loops.forEach((loop, loopIndex) => {
-        const d = distanceToPolygon(anchor, loop);
-        if (d < bestDistance) {
-          bestDistance = d;
-          bestLoop = loopIndex;
-        }
-      });
-      assignments[bestLoop].indices.push(sampleIndex);
-      assignments[bestLoop].anchors.push(anchor);
-    });
-
-    assignments.forEach((assignment, loopIndex) => {
-      const loop = loops[loopIndex];
-      if (!assignment.indices.length) {
-        finalPolygons.push(loop);
-        return;
-      }
-      const count = assignment.anchors.length;
-      let alignedLoop: Vec2[];
-      if (count >= 3) {
-        const resampled = resampleClosedPolygon(loop, count);
-        alignedLoop =
-          resampled.length === count
-            ? alignLoopToAnchors(resampled, assignment.anchors)
-            : assignment.anchors.map((pt) => ({ ...pt }));
-      } else {
-        alignedLoop = assignment.anchors.map((pt) => ({ ...pt }));
-      }
-      assignment.indices.forEach((sampleIndex, localIdx) => {
-        finalSamples[sampleIndex] = alignedLoop[localIdx] ?? finalSamples[sampleIndex];
-      });
-      finalPolygons.push(alignedLoop.length ? alignedLoop : loop);
-    });
-  });
-
-  return { innerSamples: finalSamples, polygons: finalPolygons };
+  return { innerSamples, polygons };
 };
 
 
@@ -611,11 +445,18 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
     progress,
   });
-  const centroid = computeCentroid(withThickness.map((sample) => sample.position));
+
+  const thicknessOptions = {
+    uniformThickness: path.oxidation.thicknessUniformUm,
+    weights: path.oxidation.thicknessByDirection.items,
+    mirrorSymmetry: path.oxidation.mirrorSymmetry,
+    progress,
+  };
+
   const { innerSamples, polygons } = deriveInnerGeometry(
     withThickness,
     path.meta.closed,
-    centroid,
+    thicknessOptions,
   );
   const length = accumulateLength(withThickness);
   return {
