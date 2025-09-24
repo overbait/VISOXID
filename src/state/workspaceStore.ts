@@ -25,7 +25,7 @@ import {
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
-import { clamp, distance, normalize } from '../utils/math';
+import { clamp, distance, normalize, alignLoop } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -275,7 +275,6 @@ const deriveInnerGeometry = (
   }
 
   const cleanedPolygons = cleanAndSimplifyPolygons(rawInnerPoints, 0.25);
-
   if (!cleanedPolygons.length) {
     return { innerSamples: rawInnerPoints, polygons: [] };
   }
@@ -284,10 +283,15 @@ const deriveInnerGeometry = (
     Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
   cleanedPolygons[0]);
 
-  const innerSamples = resampleClosedPolygon(primaryPolygon, samples.length);
+  if (primaryPolygon.length < 3) {
+    return { innerSamples: rawInnerPoints, polygons: cleanedPolygons };
+  }
+
+  const resampled = resampleClosedPolygon(primaryPolygon, rawInnerPoints.length);
+  const innerSamples = alignLoop(resampled, rawInnerPoints);
 
   return {
-    innerSamples: innerSamples.length ? innerSamples : rawInnerPoints,
+    innerSamples,
     polygons: cleanedPolygons,
   };
 };
