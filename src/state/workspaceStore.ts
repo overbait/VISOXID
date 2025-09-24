@@ -259,6 +259,15 @@ const deriveInnerGeometry = (
       const gradX = sdf(worldX + h, worldY) - sdf(worldX - h, worldY);
       const gradY = sdf(worldX, worldY + h) - sdf(worldX, worldY - h);
       const gradient = normalize({ x: gradX, y: gradY });
+
+      // If the gradient has zero length, normalize() will produce NaN.
+      // This can happen if the SDF is flat at the evaluation point.
+      // In this case, we can skip this grid point.
+      if (Number.isNaN(gradient.x)) {
+        scalarField[gy][gx] = 0;
+        continue;
+      }
+
       const normalAngle = Math.atan2(gradient.y, gradient.x);
 
       const inwardNormalAngle = normalAngle + Math.PI;
