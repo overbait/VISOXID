@@ -75,3 +75,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-09-25 — SDF dependency hygiene
 
 - `sdf-polygon-2d` expects `point-in-big-polygon` at runtime but omits it from its manifest. Keep `point-in-big-polygon` listed in our own dependencies so Vite’s dev server and build pipeline can resolve the require chain without manual patching.
+
+## 2025-10-10 — Variable-radius inner offset
+
+- `deriveInnerGeometry` now builds the oxide interior using a variable-radius power diagram instead of rasterised SDF marching squares. Each boundary sample contributes a circle with its local thickness; visible arcs define the offset envelope.
+- The helper filters arcs to the inward half-space so compass headings (“N”, “E”, …) map to the expected directions after evaluating normals.
+- A small Laplacian smoothing pass post-processes the sampled loop to remove stair-steps before cleaning/resampling. Preserve this order if you refine the algorithm.

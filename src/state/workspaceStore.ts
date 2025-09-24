@@ -24,10 +24,7 @@ import {
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
-import { clamp, distance, normalize, alignLoop } from '../utils/math';
-import createSDF from 'sdf-polygon-2d';
-import { isoLines } from 'marching-squares';
-import { evalThicknessForAngle, type ThicknessOptions } from '../geometry/thickness';
+import { add, alignLoop, clamp, distance, dot, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -216,99 +213,263 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
-  thicknessOptions: ThicknessOptions,
 ): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
-  if (!closed || samples.length < 3) {
-    const innerSamples = samples.map((sample) => ({
-      x: sample.position.x - sample.normal.x * sample.thickness,
-      y: sample.position.y - sample.normal.y * sample.thickness,
-    }));
-    return { innerSamples, polygons: [] };
-  }
-
-  const padding = 15;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const sample of samples) {
-    minX = Math.min(minX, sample.position.x);
-    minY = Math.min(minY, sample.position.y);
-    maxX = Math.max(maxX, sample.position.x);
-    maxY = Math.max(maxY, sample.position.y);
-  }
-  minX -= padding;
-  minY -= padding;
-  maxX += padding;
-  maxY += padding;
-
-  const outerPolygon = samples.map((s) => [s.position.x, s.position.y]);
-  const sdf = createSDF([outerPolygon]);
-
-  const resolution = 0.5;
-  const gridWidth = Math.ceil((maxX - minX) / resolution);
-  const gridHeight = Math.ceil((maxY - minY) / resolution);
-  const scalarField: number[][] = Array.from({ length: gridHeight }, () => Array(gridWidth).fill(0));
-
-  const h = 0.5;
-
-  for (let gy = 0; gy < gridHeight; gy++) {
-    for (let gx = 0; gx < gridWidth; gx++) {
-      const worldX = minX + gx * resolution;
-      const worldY = minY + gy * resolution;
-
-      const sdfValue = sdf(worldX, worldY);
-
-      const gradX = sdf(worldX + h, worldY) - sdf(worldX - h, worldY);
-      const gradY = sdf(worldX, worldY + h) - sdf(worldX, worldY - h);
-      const gradient = normalize({ x: gradX, y: gradY });
-
-      // If the gradient has zero length, normalize() will produce NaN.
-      // This can happen if the SDF is flat at the evaluation point.
-      // In this case, we can skip this grid point.
-      if (Number.isNaN(gradient.x)) {
-        scalarField[gy][gx] = 0;
-        continue;
-      }
-
-      const normalAngle = Math.atan2(gradient.y, gradient.x);
-
-      const inwardNormalAngle = normalAngle + Math.PI;
-      const targetThickness = evalThicknessForAngle(inwardNormalAngle, thicknessOptions);
-
-      scalarField[gy][gx] = sdfValue + targetThickness;
-    }
-  }
-
-  const rawContours = isoLines(scalarField, [0], { noQuadTree: true })[0] ?? [];
-
-  const toWorld = ([px, py]: [number, number]): Vec2 => ({
-    x: minX + px * resolution,
-    y: minY + py * resolution,
-  });
-
-  const polygons = rawContours.flatMap((ring) => {
-    const worldRing = ring.map(toWorld);
-    const cleaned = cleanAndSimplifyPolygons(worldRing);
-    return cleaned.length ? cleaned : [worldRing];
-  });
-
-  if (!polygons.length) {
-    return { innerSamples: [], polygons: [] };
-  }
-
-  const primaryPolygon = polygons.reduce((largest, poly) =>
-    Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
-  polygons[0]);
-
-  if (primaryPolygon.length < 3) {
-    return { innerSamples: [], polygons: polygons };
-  }
-
-  const rawInnerPoints = samples.map((sample) => ({
+  const fallbackInner = samples.map((sample) => ({
     x: sample.position.x - sample.normal.x * sample.thickness,
     y: sample.position.y - sample.normal.y * sample.thickness,
   }));
 
-  const resampled = resampleClosedPolygon(primaryPolygon, samples.length);
-  const innerSamples = alignLoop(resampled, rawInnerPoints);
+  if (!closed || samples.length < 3) {
+    return { innerSamples: fallbackInner, polygons: [] };
+  }
+
+  const TAU = Math.PI * 2;
+  const EPS = 1e-6;
+
+  type Arc = { start: number; end: number };
+
+  interface Circle {
+    center: Vec2;
+    radius: number;
+    normal: Vec2;
+  }
+
+  const wrapAngle = (angle: number): number => {
+    let wrapped = angle % TAU;
+    if (wrapped < 0) {
+      wrapped += TAU;
+    }
+    return wrapped;
+  };
+
+  const arcLength = (arc: Arc): number => arc.end - arc.start;
+
+  const pushArc = (arcs: Arc[], start: number, end: number): void => {
+    if (end - start <= EPS) return;
+    arcs.push({ start, end });
+  };
+
+  const normaliseInterval = (start: number, end: number): Arc[] => {
+    const span = end - start;
+    if (span >= TAU - EPS) {
+      return [{ start: 0, end: TAU }];
+    }
+    const s = wrapAngle(start);
+    const e = wrapAngle(end);
+    if (s <= e) {
+      return [{ start: s, end: e }];
+    }
+    return [
+      { start: 0, end: e },
+      { start: s, end: TAU },
+    ];
+  };
+
+  const subtractInterval = (arcs: Arc[], interval: Arc): Arc[] => {
+    const result: Arc[] = [];
+    for (const arc of arcs) {
+      if (interval.end <= arc.start + EPS || interval.start >= arc.end - EPS) {
+        result.push(arc);
+        continue;
+      }
+      if (interval.start > arc.start + EPS) {
+        pushArc(result, arc.start, Math.min(interval.start, arc.end));
+      }
+      if (interval.end < arc.end - EPS) {
+        pushArc(result, Math.max(interval.end, arc.start), arc.end);
+      }
+    }
+    return result;
+  };
+
+  const subtractIntervals = (arcs: Arc[], intervals: Arc[]): Arc[] => {
+    let current = arcs;
+    for (const interval of intervals) {
+      current = subtractInterval(current, interval);
+      if (!current.length) break;
+    }
+    return current;
+  };
+
+  const computeOcclusionIntervals = (a: Circle, b: Circle): Arc[] => {
+    if (b.radius <= EPS) return [];
+    const centerDist = distance(a.center, b.center);
+    if (centerDist <= EPS) {
+      if (b.radius >= a.radius - EPS) {
+        return [{ start: 0, end: TAU }];
+      }
+      return [];
+    }
+    if (centerDist >= a.radius + b.radius - EPS) {
+      return [];
+    }
+    if (centerDist <= Math.abs(a.radius - b.radius) - EPS) {
+      if (b.radius >= a.radius) {
+        return [{ start: 0, end: TAU }];
+      }
+      return [];
+    }
+
+    const angleToB = Math.atan2(b.center.y - a.center.y, b.center.x - a.center.x);
+    const cosPhi = Math.min(
+      1,
+      Math.max(-1, (a.radius * a.radius + centerDist * centerDist - b.radius * b.radius) / (2 * a.radius * centerDist)),
+    );
+    const phi = Math.acos(cosPhi);
+    return normaliseInterval(angleToB - phi, angleToB + phi);
+  };
+
+  const angleInArc = (angle: number, arc: Arc): boolean => angle >= arc.start - EPS && angle <= arc.end + EPS;
+
+  const clampAngleToArc = (angle: number, arc: Arc): number => {
+    const length = arcLength(arc);
+    if (length <= EPS * 4) {
+      return wrapAngle(arc.start + length / 2);
+    }
+    if (angle <= arc.start) {
+      return arc.start + EPS;
+    }
+    if (angle >= arc.end) {
+      return arc.end - EPS;
+    }
+    return angle;
+  };
+
+  const angularDistance = (a: number, b: number): number => {
+    let delta = Math.abs(a - b);
+    if (delta > Math.PI) {
+      delta = TAU - delta;
+    }
+    return delta;
+  };
+
+  const toPointOnCircle = (circle: Circle, angle: number): Vec2 => ({
+    x: circle.center.x + circle.radius * Math.cos(angle),
+    y: circle.center.y + circle.radius * Math.sin(angle),
+  });
+
+  const circles: Circle[] = samples.map((sample) => ({
+    center: sample.position,
+    radius: Math.max(sample.thickness, 0),
+    normal: sample.normal,
+  }));
+
+  const candidateInner: Vec2[] = samples.map((sample, index) => {
+    const circle = circles[index];
+    if (circle.radius <= EPS) {
+      return fallbackInner[index];
+    }
+
+    let arcs: Arc[] = [{ start: 0, end: TAU }];
+    for (let j = 0; j < circles.length; j += 1) {
+      if (j === index) continue;
+      const other = circles[j];
+      if (other.radius <= EPS) continue;
+      const occluded = computeOcclusionIntervals(circle, other);
+      arcs = subtractIntervals(arcs, occluded);
+      if (!arcs.length) break;
+    }
+
+    arcs = arcs
+      .filter((arc) => arc.end - arc.start > EPS)
+      .map((arc) => ({
+        start: Math.max(0, Math.min(arc.start, TAU)),
+        end: Math.max(0, Math.min(arc.end, TAU)),
+      }))
+      .filter((arc) => arc.end - arc.start > EPS)
+      .sort((a, b) => a.start - b.start);
+
+    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
+    const inwardArc = arcs.find((arc) => angleInArc(inwardAngle, arc));
+    let chosenAngle: number | null = null;
+
+    const inwardCandidate = inwardArc ? clampAngleToArc(inwardAngle, inwardArc) : null;
+
+    const arcCandidates = arcs.filter((arc) => {
+      const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
+      const midPoint = toPointOnCircle(circle, mid);
+      const direction = sub(midPoint, sample.position);
+      return dot(direction, sample.normal) < -EPS;
+    });
+
+    const availableArcs = arcCandidates.length ? arcCandidates : arcs;
+
+    if (inwardCandidate !== null) {
+      const preview = toPointOnCircle(circle, inwardCandidate);
+      const direction = sub(preview, sample.position);
+      if (dot(direction, sample.normal) < -EPS) {
+        chosenAngle = inwardCandidate;
+      }
+    }
+
+    if (chosenAngle === null && availableArcs.length) {
+      let bestArc = availableArcs[0];
+      let bestScore = Infinity;
+      for (const arc of availableArcs) {
+        const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
+        const score = angularDistance(mid, inwardAngle);
+        if (score < bestScore) {
+          bestScore = score;
+          bestArc = arc;
+        }
+      }
+      chosenAngle = clampAngleToArc(inwardAngle, bestArc);
+    }
+
+    if (chosenAngle === null) {
+      return fallbackInner[index];
+    }
+
+    const candidate = toPointOnCircle(circle, chosenAngle);
+    const direction = sub(candidate, sample.position);
+    if (dot(direction, sample.normal) >= -EPS) {
+      return fallbackInner[index];
+    }
+
+    return candidate;
+  });
+
+  const laplacianSmooth = (points: Vec2[], iterations = 3, lambda = 0.25): Vec2[] => {
+    if (points.length < 3) return points;
+    let current = points.map((p) => ({ ...p }));
+    for (let iter = 0; iter < iterations; iter += 1) {
+      const next = current.map((point, i) => {
+        const prev = current[(i - 1 + current.length) % current.length];
+        const nextPoint = current[(i + 1) % current.length];
+        const laplace = add(prev, nextPoint);
+        return {
+          x: point.x + lambda * (laplace.x / 2 - point.x),
+          y: point.y + lambda * (laplace.y / 2 - point.y),
+        };
+      });
+      current = next;
+    }
+    return current;
+  };
+
+  const smoothed = laplacianSmooth(candidateInner);
+
+  let polygons: Vec2[][] = [];
+  if (smoothed.length >= 3) {
+    polygons = cleanAndSimplifyPolygons(smoothed);
+  }
+  if (!polygons.length && smoothed.length >= 3) {
+    polygons = [smoothed];
+  }
+
+  let innerSamples = smoothed;
+
+  if (polygons.length) {
+    const primary = polygons.reduce((largest, poly) =>
+      Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
+    polygons[0]);
+    if (primary.length >= 3) {
+      const resampled = resampleClosedPolygon(primary, samples.length);
+      if (resampled.length === samples.length) {
+        innerSamples = alignLoop(resampled, fallbackInner);
+      }
+    }
+  }
 
   return { innerSamples, polygons };
 };
@@ -446,18 +607,7 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     progress,
   });
 
-  const thicknessOptions = {
-    uniformThickness: path.oxidation.thicknessUniformUm,
-    weights: path.oxidation.thicknessByDirection.items,
-    mirrorSymmetry: path.oxidation.mirrorSymmetry,
-    progress,
-  };
-
-  const { innerSamples, polygons } = deriveInnerGeometry(
-    withThickness,
-    path.meta.closed,
-    thicknessOptions,
-  );
+  const { innerSamples, polygons } = deriveInnerGeometry(withThickness, path.meta.closed);
   const length = accumulateLength(withThickness);
   return {
     ...path,
