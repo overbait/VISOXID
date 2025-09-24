@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type {
+  DirectionalWeight,
   MeasurementProbe,
   OxidationSettings,
   PathEntity,
@@ -81,12 +82,6 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
 
-import { createId } from '../utils/ids';
-import type {
-  DirectionalWeight,
-  MeasurementProbe,
-  OxidationSettings,
-// ...
 type WorkspaceActions = {
   setActiveTool: (tool: ToolId) => void;
   addPath: (nodes: PathNode[], overrides?: Partial<PathEntity>) => string;
