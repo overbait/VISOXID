@@ -110,7 +110,13 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Keep the polygon reference (`projectionLoop`) in sync with the dense envelope you intend to visualise; the ray projection assumes the polygon is closed and non-degenerate.
 - Falling back to the previous per-sample candidate is still allowed, but only after a raycast fails—don’t remove the guard, it maintains backwards compatibility for open paths and degenerate normals.
 
-## 2025-10-16 — Disc-envelope sampling fix
+## 2025-10-16 — Disc-envelope sampling fix _(superseded)_
 
-- `deriveInnerGeometry` samples each oxidation circle directly at adaptive angular steps, discarding directions that point outward or become occluded by a neighbour’s disc. Preserve this sampling so the inner contour always inherits circular curvature from the contributing site instead of collapsing to chords.
-- When a sample contributes no visible arc, we fall back to casting its inward normal through the disc envelope. Keep this behaviour so occluded spans still align with the final cleaned polygon before the minimum-thickness clamp runs.
+- `deriveInnerGeometry` previously sampled each oxidation circle directly at adaptive angular steps, discarding directions that pointed outward or became occluded by a neighbour’s disc.
+- When a sample contributed no visible arc, we fell back to casting its inward normal through the disc envelope. This strategy has since been replaced—see 2025-10-17 for the current workflow.
+
+## 2025-10-17 — Clipper-led baseline envelope
+
+- `deriveInnerGeometry` now seeds the inner loop from a Clipper “round” inset built with the uniform thickness before re-aligning samples. Keep the `computeOffset(..., { delta: -uniformThickness })` call so sharp corners render as circular fillets instead of collapsing into triangles.
+- The inset polygon only serves as the projection reference—the final per-sample points are still obtained by raycasting along each inward normal and clamping to at least the requested (uniform + directional) thickness. Do not remove the `enforceMinimumOffset` raycast.
+- Cleaning runs on the projected loop itself; if it self-intersects we resample the dominant polygon back onto the sample indices before re-projecting. Preserve this ordering so measurement probes stay paired with their outer samples.

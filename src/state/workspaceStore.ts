@@ -20,13 +20,14 @@ import {
   adaptiveSamplePath,
   accumulateLength,
   cleanAndSimplifyPolygons,
+  computeOffset,
   evalThickness,
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
-import { alignLoop, clamp, distance, dot, lengthSq, normalize, sub } from '../utils/math';
+import { alignLoop, clamp, distance, dot, normalize, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -233,171 +234,59 @@ const deriveInnerGeometry = (
   const defaultResolution = Math.min(0.5, thicknessOptions.uniformThickness / 4);
   const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
 
-  const TAU = Math.PI * 2;
   const EPS = 1e-6;
 
-  const wrapAngle = (angle: number): number => {
-    let wrapped = angle % TAU;
-    if (wrapped < 0) {
-      wrapped += TAU;
+  const selectPrimaryLoop = (loops: Vec2[][]): Vec2[] | null => {
+    let best: { area: number; loop: Vec2[] } | null = null;
+    for (const loop of loops) {
+      if (loop.length < 3) continue;
+      const area = polygonArea(loop);
+      const signed = area * orientationSign >= 0 ? area : -area;
+      const absArea = Math.abs(signed);
+      if (absArea <= EPS) continue;
+      const oriented = area * orientationSign >= 0 ? loop : [...loop].reverse();
+      if (!best || absArea > best.area) {
+        best = { area: absArea, loop: oriented };
+      }
     }
-    return wrapped;
+    return best ? best.loop : null;
   };
 
-  const angularDistance = (a: number, b: number): number => {
-    let delta = Math.abs(a - b);
-    if (delta > Math.PI) {
-      delta = TAU - delta;
+  const stripDuplicateClosingPoint = (loop: Vec2[]): Vec2[] => {
+    if (loop.length < 2) return loop;
+    const first = loop[0];
+    const last = loop.at(-1)!;
+    if (Math.hypot(first.x - last.x, first.y - last.y) <= EPS) {
+      return loop.slice(0, -1);
     }
-    return delta;
+    return loop;
   };
 
-  interface Circle {
-    center: Vec2;
-    radius: number;
-    radiusSq: number;
+  const uniformThickness = Math.max(thicknessOptions.uniformThickness, 0);
+  let baselineLoop: Vec2[] | null = null;
+
+  if (uniformThickness > EPS) {
+    const offsetLoopsRaw = computeOffset(outerLoop, {
+      delta: -uniformThickness,
+      joinStyle: 'round',
+      miterLimit: 4,
+    });
+    const stripped = offsetLoopsRaw.map(stripDuplicateClosingPoint);
+    baselineLoop = selectPrimaryLoop(stripped);
   }
 
-  const toPointOnCircle = (circle: Circle, angle: number): Vec2 => ({
-    x: circle.center.x + circle.radius * Math.cos(angle),
-    y: circle.center.y + circle.radius * Math.sin(angle),
-  });
+  let seededLoop: Vec2[] = baselineLoop ?? fallbackInner;
 
-  const circles: Circle[] = samples.map((sample) => {
-    const radius = Math.max(sample.thickness, 0);
-    return {
-      center: sample.position,
-      radius,
-      radiusSq: radius * radius,
-    };
-  });
-
-  const occlusionTolerance = Math.max(resolution * 0.25, 0.005);
-
-  const isPointOccluded = (point: Vec2, ownerIndex: number): boolean => {
-    for (let j = 0; j < circles.length; j += 1) {
-      if (j === ownerIndex) continue;
-      const other = circles[j];
-      if (other.radius <= EPS) continue;
-      if (distance(point, other.center) <= other.radius - occlusionTolerance) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  const intersectRayWithCircles = (origin: Vec2, direction: Vec2): number | null => {
-    let best: number | null = null;
-    for (const circle of circles) {
-      if (circle.radius <= EPS) continue;
-      const oc = sub(origin, circle.center);
-      const b = 2 * dot(oc, direction);
-      const c = lengthSq(oc) - circle.radiusSq;
-      const discriminant = b * b - 4 * c;
-      if (discriminant < -EPS) continue;
-      const sqrtDisc = Math.sqrt(Math.max(0, discriminant));
-      const t1 = (-b - sqrtDisc) / 2;
-      const t2 = (-b + sqrtDisc) / 2;
-      if (t1 > EPS && (best === null || t1 < best)) {
-        best = t1;
-      }
-      if (t2 > EPS && (best === null || t2 < best)) {
-        best = t2;
-      }
-    }
-    return best;
-  };
-
-  const denseLoop: Vec2[] = [];
-
-  const appendToDenseLoop = (points: Vec2[]): void => {
-    for (const point of points) {
-      const last = denseLoop.at(-1);
-      if (!last || distance(last, point) > Math.max(resolution * 0.25, 0.01)) {
-        denseLoop.push(point);
-      }
-    }
-  };
-
-  const sampledInner: Vec2[] = samples.map((sample, index) => {
-    const circle = circles[index];
-    if (circle.radius <= EPS) {
-      return fallbackInner[index];
-    }
-
-    const inward = normalize({ x: -sample.normal.x, y: -sample.normal.y });
-    if (Math.abs(inward.x) <= EPS && Math.abs(inward.y) <= EPS) {
-      return fallbackInner[index];
-    }
-
-    const inwardAngle = wrapAngle(Math.atan2(inward.y, inward.x));
-    const perimeter = Math.max(circle.radius * TAU, resolution);
-    const segments = Math.max(24, Math.ceil(perimeter / Math.max(resolution, 0.01)));
-    const visiblePoints: Vec2[] = [];
-
-    let bestCandidate: { point: Vec2; angleDiff: number } | null = null;
-
-    for (let step = 0; step < segments; step += 1) {
-      const baseAngle = (TAU * step) / segments;
-      const angle = wrapAngle(orientationSign >= 0 ? baseAngle : TAU - baseAngle);
-      const point = toPointOnCircle(circle, angle);
-      const toPoint = sub(point, sample.position);
-      if (dot(toPoint, sample.normal) >= -EPS) {
-        continue;
-      }
-      if (isPointOccluded(point, index)) {
-        continue;
-      }
-      visiblePoints.push(point);
-
-      const pointAngle = wrapAngle(Math.atan2(point.y - circle.center.y, point.x - circle.center.x));
-      const diff = angularDistance(pointAngle, inwardAngle);
-      if (!bestCandidate || diff < bestCandidate.angleDiff) {
-        bestCandidate = { point, angleDiff: diff };
-      }
-    }
-
-    if (visiblePoints.length) {
-      appendToDenseLoop(visiblePoints);
-    }
-
-    if (bestCandidate) {
-      return bestCandidate.point;
-    }
-
-    const rayDistance = intersectRayWithCircles(sample.position, inward);
-    if (rayDistance !== null && Number.isFinite(rayDistance) && rayDistance > EPS) {
-      const candidate = {
-        x: sample.position.x + inward.x * rayDistance,
-        y: sample.position.y + inward.y * rayDistance,
-      };
-      appendToDenseLoop([candidate]);
-      return candidate;
-    }
-
-    appendToDenseLoop([fallbackInner[index]]);
-    return fallbackInner[index];
-  });
-
-  let seededLoop: Vec2[] = sampledInner;
-  const closedDenseLoop = (() => {
-    if (denseLoop.length < 3) return denseLoop;
-    const first = denseLoop[0];
-    const last = denseLoop.at(-1)!;
-    if (distance(first, last) <= Math.max(resolution * 0.5, 0.02)) {
-      return denseLoop.slice(0, -1);
-    }
-    return denseLoop;
-  })();
-
-  if (closedDenseLoop.length >= 3 && samples.length >= 3) {
-    const resampled = resampleClosedPolygon(closedDenseLoop, samples.length);
+  if (baselineLoop && baselineLoop.length >= 3 && samples.length >= 3) {
+    const resampled = resampleClosedPolygon(baselineLoop, samples.length);
     if (resampled.length === samples.length) {
-      seededLoop = resampled;
+      seededLoop = alignLoop(resampled, fallbackInner);
+    } else {
+      seededLoop = alignLoop(fallbackInner, fallbackInner);
     }
+  } else if (samples.length >= 3) {
+    seededLoop = fallbackInner;
   }
-
-  const projectionLoop = closedDenseLoop.length >= 3 ? closedDenseLoop : seededLoop;
 
   const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
 
@@ -470,6 +359,8 @@ const deriveInnerGeometry = (
     closed: true,
   });
   const alignedSmooth = alignLoop(smoothed, fallbackInner);
+
+  const projectionLoop = baselineLoop && baselineLoop.length >= 3 ? baselineLoop : alignedSmooth;
   const enforced = enforceMinimumOffset(alignedSmooth, projectionLoop);
 
   const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
@@ -519,13 +410,13 @@ const deriveInnerGeometry = (
 
   const needsCleaning = hasSelfIntersections(enforced);
 
+  const cleaningTolerance = Math.max(resolution, 0.01);
   let polygons: Vec2[][] = [];
-  if (closedDenseLoop.length >= 3) {
-    const cleaningTolerance = Math.max(resolution, 0.01);
-    polygons = cleanAndSimplifyPolygons(closedDenseLoop, cleaningTolerance);
+  if (enforced.length >= 3) {
+    polygons = cleanAndSimplifyPolygons(enforced, cleaningTolerance);
   }
-  if (!polygons.length && enforced.length >= 3) {
-    polygons = [enforced];
+  if (!polygons.length && projectionLoop.length >= 3) {
+    polygons = [projectionLoop];
   }
 
   let innerSamples = enforced;
