@@ -55,7 +55,15 @@ export interface OxidationSettings {
   smoothingStrength: number;
   evaluationSpacing: number;
   vonMisesKappa: number;
+  directionalFocus: number;
   mirrorSymmetry: boolean;
+  directionalWeights: DirectionalWeight[];
+}
+
+export interface DirectionalWeight {
+  id: string;
+  angle: number; // In degrees, 0 is 'East' (positive x-axis)
+  strength: number; // Additional thickness in nm
 }
 
 export interface OxidationPreset {

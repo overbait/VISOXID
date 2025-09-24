@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { CanvasViewport } from './ui/CanvasViewport';
 import { ToolPanel } from './ui/ToolPanel';
+import { DirectionalWeightsPanel } from './ui/DirectionalWeightsPanel';
 import { OxidationPanel } from './ui/OxidationPanel';
 import { GridMirrorPanel } from './ui/GridMirrorPanel';
 import { MeasurementPanel } from './ui/MeasurementPanel';
@@ -83,6 +84,7 @@ export const App = () => {
           <CanvasViewport />
           <div className="flex flex-col gap-4">
             <OxidationPanel />
+            <DirectionalWeightsPanel />
             <GridMirrorPanel />
             <MeasurementPanel />
           </div>

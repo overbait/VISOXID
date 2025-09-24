@@ -1,3 +1,4 @@
+import { computeVariableOffset } from '../geometry';
 import type { PathEntity } from '../types';
 
 const moveToPoint = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
@@ -38,20 +39,20 @@ export const drawContours = (
   );
   ctx.restore();
   if (!path.sampled) return;
-  // draw inner/outer contours using thickness information
-  const halfWidth = path.sampled.samples.map((sample) => sample.thickness / 2);
-  const outer = path.sampled.samples.map((sample, index) => ({
-    x: sample.position.x + sample.normal.x * halfWidth[index],
-    y: sample.position.y + sample.normal.y * halfWidth[index],
-  }));
-  const inner = path.sampled.samples.map((sample, index) => ({
-    x: sample.position.x - sample.normal.x * halfWidth[index],
-    y: sample.position.y - sample.normal.y * halfWidth[index],
-  }));
+  // Draw the robust, variable-offset inner contour
+  const innerContours = computeVariableOffset(path.sampled);
+
   ctx.save();
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(37, 99, 235, 0.25)';
-  strokePolyline(ctx, outer);
-  strokePolyline(ctx, inner);
+  ctx.lineWidth = 1.2;
+  ctx.strokeStyle = 'rgba(37, 99, 235, 0.6)';
+  ctx.fillStyle = 'rgba(37, 99, 235, 0.05)';
+  for (const poly of innerContours) {
+    strokePolyline(ctx, poly);
+    // Also fill the shape to make it more visible
+    if (poly.length > 2) {
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
   ctx.restore();
 };

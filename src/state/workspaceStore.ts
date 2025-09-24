@@ -25,7 +25,9 @@ const defaultOxidation: OxidationSettings = {
   smoothingStrength: 0.6,
   evaluationSpacing: 12,
   vonMisesKappa: 5,
+  directionalFocus: 8,
   mirrorSymmetry: false,
+  directionalWeights: [],
 };
 
 const createEmptyState = (): WorkspaceState => ({
@@ -79,6 +81,12 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
 
+import { createId } from '../utils/ids';
+import type {
+  DirectionalWeight,
+  MeasurementProbe,
+  OxidationSettings,
+// ...
 type WorkspaceActions = {
   setActiveTool: (tool: ToolId) => void;
   addPath: (nodes: PathNode[], overrides?: Partial<PathEntity>) => string;
@@ -88,6 +96,12 @@ type WorkspaceActions = {
   updateGrid: (settings: Partial<WorkspaceState['grid']>) => void;
   updateMirror: (settings: Partial<WorkspaceState['mirror']>) => void;
   updateOxidationDefaults: (settings: Partial<OxidationSettings>) => void;
+  addDirectionalWeight: () => void;
+  updateDirectionalWeight: (
+    id: string,
+    newWeight: Partial<Omit<DirectionalWeight, 'id'>>,
+  ) => void;
+  removeDirectionalWeight: (id: string) => void;
   setProbe: (probe: MeasurementProbe | null) => void;
   addProbe: (probe: MeasurementProbe) => void;
   clearProbes: () => void;
@@ -108,21 +122,15 @@ const runGeometryPipeline = (path: PathEntity): PathEntity => {
     spacing: path.oxidation.evaluationSpacing,
   });
   const normals = recomputeNormals(sampled.samples);
-  const seeded = normals.map((sample) => ({
-    ...sample,
-    thickness: path.oxidation.baseThickness,
-  }));
   const smoothed = smoothSamples(
-    seeded,
+    normals,
     path.oxidation.smoothingIterations,
     path.oxidation.smoothingStrength,
   );
   const withThickness = evalThickness(smoothed, {
-    kernelWidth: path.oxidation.kernelWidth,
     baseThickness: path.oxidation.baseThickness,
-    targetThickness: path.oxidation.targetThickness,
-    vonMisesKappa: path.oxidation.vonMisesKappa,
-    mirrorSymmetry: path.oxidation.mirrorSymmetry,
+    directionalWeights: path.oxidation.directionalWeights,
+    directionalFocus: path.oxidation.directionalFocus,
   });
   const length = accumulateLength(withThickness);
   return {
@@ -219,6 +227,43 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     oxidationDefaults: { ...state.oxidationDefaults, ...settings },
     dirty: true,
   })),
+  addDirectionalWeight: () =>
+    set((state) => {
+      const newWeight: DirectionalWeight = {
+        id: createId('dweight'),
+        angle: 0,
+        strength: 5,
+      };
+      return {
+        oxidationDefaults: {
+          ...state.oxidationDefaults,
+          directionalWeights: [...state.oxidationDefaults.directionalWeights, newWeight],
+        },
+        dirty: true,
+      };
+    }),
+  updateDirectionalWeight: (id, newWeight) =>
+    set((state) => {
+      const index = state.oxidationDefaults.directionalWeights.findIndex((w) => w.id === id);
+      if (index === -1) return state;
+      const nextWeights = [...state.oxidationDefaults.directionalWeights];
+      nextWeights[index] = { ...nextWeights[index], ...newWeight };
+      return {
+        oxidationDefaults: {
+          ...state.oxidationDefaults,
+          directionalWeights: nextWeights,
+        },
+        dirty: true,
+      };
+    }),
+  removeDirectionalWeight: (id) =>
+    set((state) => ({
+      oxidationDefaults: {
+        ...state.oxidationDefaults,
+        directionalWeights: state.oxidationDefaults.directionalWeights.filter((w) => w.id !== id),
+      },
+      dirty: true,
+    })),
   setProbe: (probe) => set((state) => ({
     measurements: { ...state.measurements, activeProbe: probe },
   })),

@@ -68,12 +68,20 @@ export const OxidationPanel = () => {
           onChange={(value) => updateDefaults({ smoothingIterations: Math.round(value) })}
         />
         <LabeledSlider
-          label="Von Mises κ"
+          label="Contour Self-Influence"
           min={1}
           max={12}
           step={0.5}
           value={defaults.vonMisesKappa}
           onChange={(value) => updateDefaults({ vonMisesKappa: value })}
+        />
+        <LabeledSlider
+          label="Directional Focus"
+          min={1}
+          max={50}
+          step={1}
+          value={defaults.directionalFocus}
+          onChange={(value) => updateDefaults({ directionalFocus: value })}
         />
       </div>
       <label className="flex items-center gap-2 text-xs font-medium text-muted">
