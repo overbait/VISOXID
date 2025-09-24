@@ -226,6 +226,28 @@ const deriveInnerGeometry = (
     return { innerSamples: fallbackInner, polygons: [] };
   }
 
+  const enforceMinimumOffset = (loop: Vec2[]): Vec2[] => {
+    if (loop.length !== samples.length) {
+      return loop;
+    }
+
+    return loop.map((point, index) => {
+      const sample = samples[index];
+      const fallback = fallbackInner[index];
+      const toPoint = sub(point, sample.position);
+      const inwardDistance = -dot(toPoint, sample.normal);
+      const minTravel = Math.max(sample.thickness, 0);
+      if (!Number.isFinite(inwardDistance) || inwardDistance <= 0) {
+        return fallback;
+      }
+      const travel = Math.max(minTravel, inwardDistance);
+      return {
+        x: sample.position.x - sample.normal.x * travel,
+        y: sample.position.y - sample.normal.y * travel,
+      };
+    });
+  };
+
   const defaultResolution = Math.min(0.5, thicknessOptions.uniformThickness / 4);
   const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
 
@@ -441,6 +463,7 @@ const deriveInnerGeometry = (
     closed: true,
   });
   const alignedSmooth = alignLoop(smoothed, fallbackInner);
+  const enforced = enforceMinimumOffset(alignedSmooth);
 
   const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
@@ -487,18 +510,18 @@ const deriveInnerGeometry = (
     return false;
   };
 
-  const needsCleaning = hasSelfIntersections(alignedSmooth);
+  const needsCleaning = hasSelfIntersections(enforced);
 
   let polygons: Vec2[][] = [];
   if (needsCleaning) {
     const cleaningTolerance = Math.max(resolution, 0.01);
-    polygons = cleanAndSimplifyPolygons(alignedSmooth, cleaningTolerance);
+    polygons = cleanAndSimplifyPolygons(enforced, cleaningTolerance);
   }
-  if (!polygons.length && alignedSmooth.length >= 3) {
-    polygons = [alignedSmooth];
+  if (!polygons.length && enforced.length >= 3) {
+    polygons = [enforced];
   }
 
-  let innerSamples = alignedSmooth;
+  let innerSamples = enforced;
 
   if (needsCleaning && polygons.length) {
     const primary = polygons.reduce((largest, poly) =>
@@ -507,7 +530,8 @@ const deriveInnerGeometry = (
     if (primary.length >= 3) {
       const resampled = resampleClosedPolygon(primary, samples.length);
       if (resampled.length === samples.length) {
-        innerSamples = alignLoop(resampled, fallbackInner);
+        const realigned = alignLoop(resampled, fallbackInner);
+        innerSamples = enforceMinimumOffset(realigned);
       }
     }
   }
