@@ -26,7 +26,7 @@ import {
   resampleClosedPolygon,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
-import { alignLoop, clamp, distance, dot, normalize, sub } from '../utils/math';
+import { alignLoop, clamp, distance, dot, lengthSq, normalize, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -236,113 +236,12 @@ const deriveInnerGeometry = (
   const TAU = Math.PI * 2;
   const EPS = 1e-6;
 
-  type Arc = { start: number; end: number };
-
-  interface Circle {
-    center: Vec2;
-    radius: number;
-    normal: Vec2;
-  }
-
   const wrapAngle = (angle: number): number => {
     let wrapped = angle % TAU;
     if (wrapped < 0) {
       wrapped += TAU;
     }
     return wrapped;
-  };
-
-  const arcLength = (arc: Arc): number => arc.end - arc.start;
-
-  const pushArc = (arcs: Arc[], start: number, end: number): void => {
-    if (end - start <= EPS) return;
-    arcs.push({ start, end });
-  };
-
-  const normaliseInterval = (start: number, end: number): Arc[] => {
-    const span = end - start;
-    if (span >= TAU - EPS) {
-      return [{ start: 0, end: TAU }];
-    }
-    const s = wrapAngle(start);
-    const e = wrapAngle(end);
-    if (s <= e) {
-      return [{ start: s, end: e }];
-    }
-    return [
-      { start: 0, end: e },
-      { start: s, end: TAU },
-    ];
-  };
-
-  const subtractInterval = (arcs: Arc[], interval: Arc): Arc[] => {
-    const result: Arc[] = [];
-    for (const arc of arcs) {
-      if (interval.end <= arc.start + EPS || interval.start >= arc.end - EPS) {
-        result.push(arc);
-        continue;
-      }
-      if (interval.start > arc.start + EPS) {
-        pushArc(result, arc.start, Math.min(interval.start, arc.end));
-      }
-      if (interval.end < arc.end - EPS) {
-        pushArc(result, Math.max(interval.end, arc.start), arc.end);
-      }
-    }
-    return result;
-  };
-
-  const subtractIntervals = (arcs: Arc[], intervals: Arc[]): Arc[] => {
-    let current = arcs;
-    for (const interval of intervals) {
-      current = subtractInterval(current, interval);
-      if (!current.length) break;
-    }
-    return current;
-  };
-
-  const computeOcclusionIntervals = (a: Circle, b: Circle): Arc[] => {
-    if (b.radius <= EPS) return [];
-    const centerDist = distance(a.center, b.center);
-    if (centerDist <= EPS) {
-      if (b.radius >= a.radius - EPS) {
-        return [{ start: 0, end: TAU }];
-      }
-      return [];
-    }
-    if (centerDist >= a.radius + b.radius - EPS) {
-      return [];
-    }
-    if (centerDist <= Math.abs(a.radius - b.radius) - EPS) {
-      if (b.radius >= a.radius) {
-        return [{ start: 0, end: TAU }];
-      }
-      return [];
-    }
-
-    const angleToB = Math.atan2(b.center.y - a.center.y, b.center.x - a.center.x);
-    const cosPhi = Math.min(
-      1,
-      Math.max(-1, (a.radius * a.radius + centerDist * centerDist - b.radius * b.radius) / (2 * a.radius * centerDist)),
-    );
-    const phi = Math.acos(cosPhi);
-    return normaliseInterval(angleToB - phi, angleToB + phi);
-  };
-
-  const angleInArc = (angle: number, arc: Arc): boolean => angle >= arc.start - EPS && angle <= arc.end + EPS;
-
-  const clampAngleToArc = (angle: number, arc: Arc): number => {
-    const length = arcLength(arc);
-    if (length <= EPS * 4) {
-      return wrapAngle(arc.start + length / 2);
-    }
-    if (angle <= arc.start) {
-      return arc.start + EPS;
-    }
-    if (angle >= arc.end) {
-      return arc.end - EPS;
-    }
-    return angle;
   };
 
   const angularDistance = (a: number, b: number): number => {
@@ -353,16 +252,61 @@ const deriveInnerGeometry = (
     return delta;
   };
 
+  interface Circle {
+    center: Vec2;
+    radius: number;
+    radiusSq: number;
+  }
+
   const toPointOnCircle = (circle: Circle, angle: number): Vec2 => ({
     x: circle.center.x + circle.radius * Math.cos(angle),
     y: circle.center.y + circle.radius * Math.sin(angle),
   });
 
-  const circles: Circle[] = samples.map((sample) => ({
-    center: sample.position,
-    radius: Math.max(sample.thickness, 0),
-    normal: sample.normal,
-  }));
+  const circles: Circle[] = samples.map((sample) => {
+    const radius = Math.max(sample.thickness, 0);
+    return {
+      center: sample.position,
+      radius,
+      radiusSq: radius * radius,
+    };
+  });
+
+  const occlusionTolerance = Math.max(resolution * 0.25, 0.005);
+
+  const isPointOccluded = (point: Vec2, ownerIndex: number): boolean => {
+    for (let j = 0; j < circles.length; j += 1) {
+      if (j === ownerIndex) continue;
+      const other = circles[j];
+      if (other.radius <= EPS) continue;
+      if (distance(point, other.center) <= other.radius - occlusionTolerance) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const intersectRayWithCircles = (origin: Vec2, direction: Vec2): number | null => {
+    let best: number | null = null;
+    for (const circle of circles) {
+      if (circle.radius <= EPS) continue;
+      const oc = sub(origin, circle.center);
+      const b = 2 * dot(oc, direction);
+      const c = lengthSq(oc) - circle.radiusSq;
+      const discriminant = b * b - 4 * c;
+      if (discriminant < -EPS) continue;
+      const sqrtDisc = Math.sqrt(Math.max(0, discriminant));
+      const t1 = (-b - sqrtDisc) / 2;
+      const t2 = (-b + sqrtDisc) / 2;
+      if (t1 > EPS && (best === null || t1 < best)) {
+        best = t1;
+      }
+      if (t2 > EPS && (best === null || t2 < best)) {
+        best = t2;
+      }
+    }
+    return best;
+  };
 
   const denseLoop: Vec2[] = [];
 
@@ -381,92 +325,58 @@ const deriveInnerGeometry = (
       return fallbackInner[index];
     }
 
-    let arcs: Arc[] = [{ start: 0, end: TAU }];
-    for (let j = 0; j < circles.length; j += 1) {
-      if (j === index) continue;
-      const other = circles[j];
-      if (other.radius <= EPS) continue;
-      const occluded = computeOcclusionIntervals(circle, other);
-      arcs = subtractIntervals(arcs, occluded);
-      if (!arcs.length) break;
-    }
-
-    arcs = arcs
-      .filter((arc) => arc.end - arc.start > EPS)
-      .map((arc) => ({
-        start: Math.max(0, Math.min(arc.start, TAU)),
-        end: Math.max(0, Math.min(arc.end, TAU)),
-      }))
-      .filter((arc) => arc.end - arc.start > EPS)
-      .sort((a, b) => a.start - b.start);
-
-    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
-    const inwardArc = arcs.find((arc) => angleInArc(inwardAngle, arc));
-
-    const arcCandidates = arcs.filter((arc) => {
-      const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
-      const midPoint = toPointOnCircle(circle, mid);
-      const direction = sub(midPoint, sample.position);
-      return dot(direction, sample.normal) < -EPS;
-    });
-
-    const availableArcs = arcCandidates.length ? arcCandidates : arcs;
-
-    let selectedArc: Arc | null = null;
-    if (inwardArc) {
-      const mid = wrapAngle(inwardArc.start + (inwardArc.end - inwardArc.start) / 2);
-      const preview = toPointOnCircle(circle, mid);
-      if (dot(sub(preview, sample.position), sample.normal) < -EPS) {
-        selectedArc = inwardArc;
-      }
-    }
-
-    if (!selectedArc && availableArcs.length) {
-      let bestArc = availableArcs[0];
-      let bestScore = Infinity;
-      for (const arc of availableArcs) {
-        const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
-        const score = angularDistance(mid, inwardAngle);
-        if (score < bestScore) {
-          bestScore = score;
-          bestArc = arc;
-        }
-      }
-      selectedArc = bestArc;
-    }
-
-    let chosenAngle: number | null = null;
-    if (selectedArc) {
-      chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
-      const span = selectedArc.end - selectedArc.start;
-      const approxLength = circle.radius * span;
-      const subdivisions = Math.max(6, Math.ceil(approxLength / Math.max(resolution, 0.01)));
-      const arcPoints: Vec2[] = [];
-      for (let step = 0; step < subdivisions; step += 1) {
-        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
-        const angle =
-          orientationSign >= 0
-            ? selectedArc.start + span * t
-            : selectedArc.end - span * t;
-        arcPoints.push(toPointOnCircle(circle, angle));
-      }
-      appendToDenseLoop(arcPoints);
-    }
-
-    if (chosenAngle === null) {
-      const fallback = fallbackInner[index];
-      appendToDenseLoop([fallback]);
-      return fallback;
-    }
-
-    const candidate = toPointOnCircle(circle, chosenAngle);
-    const direction = sub(candidate, sample.position);
-    if (dot(direction, sample.normal) >= -EPS) {
-      appendToDenseLoop([fallbackInner[index]]);
+    const inward = normalize({ x: -sample.normal.x, y: -sample.normal.y });
+    if (Math.abs(inward.x) <= EPS && Math.abs(inward.y) <= EPS) {
       return fallbackInner[index];
     }
 
-    return candidate;
+    const inwardAngle = wrapAngle(Math.atan2(inward.y, inward.x));
+    const perimeter = Math.max(circle.radius * TAU, resolution);
+    const segments = Math.max(24, Math.ceil(perimeter / Math.max(resolution, 0.01)));
+    const visiblePoints: Vec2[] = [];
+
+    let bestCandidate: { point: Vec2; angleDiff: number } | null = null;
+
+    for (let step = 0; step < segments; step += 1) {
+      const baseAngle = (TAU * step) / segments;
+      const angle = wrapAngle(orientationSign >= 0 ? baseAngle : TAU - baseAngle);
+      const point = toPointOnCircle(circle, angle);
+      const toPoint = sub(point, sample.position);
+      if (dot(toPoint, sample.normal) >= -EPS) {
+        continue;
+      }
+      if (isPointOccluded(point, index)) {
+        continue;
+      }
+      visiblePoints.push(point);
+
+      const pointAngle = wrapAngle(Math.atan2(point.y - circle.center.y, point.x - circle.center.x));
+      const diff = angularDistance(pointAngle, inwardAngle);
+      if (!bestCandidate || diff < bestCandidate.angleDiff) {
+        bestCandidate = { point, angleDiff: diff };
+      }
+    }
+
+    if (visiblePoints.length) {
+      appendToDenseLoop(visiblePoints);
+    }
+
+    if (bestCandidate) {
+      return bestCandidate.point;
+    }
+
+    const rayDistance = intersectRayWithCircles(sample.position, inward);
+    if (rayDistance !== null && Number.isFinite(rayDistance) && rayDistance > EPS) {
+      const candidate = {
+        x: sample.position.x + inward.x * rayDistance,
+        y: sample.position.y + inward.y * rayDistance,
+      };
+      appendToDenseLoop([candidate]);
+      return candidate;
+    }
+
+    appendToDenseLoop([fallbackInner[index]]);
+    return fallbackInner[index];
   });
 
   let seededLoop: Vec2[] = sampledInner;

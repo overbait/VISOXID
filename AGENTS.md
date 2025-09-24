@@ -109,3 +109,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - When enforcing the minimum oxide thickness, project each sample along its inward normal until it intersects the dense arc envelope. This raycast distance replaces the old dot-product clamp so sharp corners expand smoothly instead of collapsing to straight chords.
 - Keep the polygon reference (`projectionLoop`) in sync with the dense envelope you intend to visualise; the ray projection assumes the polygon is closed and non-degenerate.
 - Falling back to the previous per-sample candidate is still allowed, but only after a raycast fails—don’t remove the guard, it maintains backwards compatibility for open paths and degenerate normals.
+
+## 2025-10-16 — Disc-envelope sampling fix
+
+- `deriveInnerGeometry` samples each oxidation circle directly at adaptive angular steps, discarding directions that point outward or become occluded by a neighbour’s disc. Preserve this sampling so the inner contour always inherits circular curvature from the contributing site instead of collapsing to chords.
+- When a sample contributes no visible arc, we fall back to casting its inward normal through the disc envelope. Keep this behaviour so occluded spans still align with the final cleaned polygon before the minimum-thickness clamp runs.
