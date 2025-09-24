@@ -74,4 +74,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 ## 2025-09-25 — SDF dependency hygiene
 
-- `sdf-polygon-2d` expects `point-in-big-polygon` at runtime but omits it from its manifest. Keep `point-in-big-polygon` listed in our own dependencies so Vite’s dev server and build pipeline can resolve the require chain without manual patching.
+- `sdf-polygon-2d` expects `point-in-big-polygon` at runtime but omits it from its manifest. This note is now historical—see 2025-09-26 for the in-house sampler that retired both packages.
+
+## 2025-09-26 — Local polygon SDF sampler
+
+- We vendor a minimal signed-distance sampler for closed loops inside `workspaceStore` so the marching-squares pass no longer depends on `sdf-polygon-2d`. Keep the ray-cast test and segment proximity tolerance in sync if you refactor the sampler or reuse it elsewhere.
