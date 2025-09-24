@@ -58,3 +58,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2024-06-02 — Clipper offset execution fix
 
 - `computeOffset` must call `ClipperOffset.Execute` with an output array to avoid mutating a numeric delta (the JS port mutates the array argument). Reuse the shared helper and don’t reintroduce the old single-argument form—it hard-crashes the app on startup.
+
+## 2025-02-14 — Baseline sample alignment
+
+- Inner oxidation baselines derived from Clipper must stay rotationally aligned with the original fallback baseline before directional growth. When resampling the inset, rotate (and reverse if needed) so `baselineSamples[i]` lines up with the corresponding outer sample.
+- Keep the raw fallback array as the ultimate reference; only swap in the aligned inset when its length matches the sample count.
+- This alignment ensures directional expansions stay anchored to their intended compass spokes, especially on asymmetric shapes.

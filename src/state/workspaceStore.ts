@@ -287,8 +287,49 @@ const deriveInnerGeometry = (
       offsets[0]);
       if (primaryBaseline.length >= 3) {
         const resampledBaseline = resampleClosedPolygon(primaryBaseline, samples.length);
+        const alignBaselineSequence = (candidate: Vec2[]): Vec2[] => {
+          if (candidate.length !== initialBaseline.length || !candidate.length) {
+            return candidate;
+          }
+
+          const rotateToReference = (sequence: Vec2[]): Vec2[] => {
+            if (!sequence.length) return sequence;
+            const referencePoint = initialBaseline[0];
+            let bestIndex = 0;
+            let bestDistance = Number.POSITIVE_INFINITY;
+            for (let i = 0; i < sequence.length; i += 1) {
+              const dx = sequence[i].x - referencePoint.x;
+              const dy = sequence[i].y - referencePoint.y;
+              const distSq = dx * dx + dy * dy;
+              if (distSq < bestDistance) {
+                bestDistance = distSq;
+                bestIndex = i;
+              }
+            }
+            if (bestIndex === 0) {
+              return sequence;
+            }
+            return sequence.slice(bestIndex).concat(sequence.slice(0, bestIndex));
+          };
+
+          const scoreAlignment = (sequence: Vec2[]): { score: number; sequence: Vec2[] } => {
+            const rotated = rotateToReference(sequence);
+            let score = 0;
+            for (let i = 0; i < rotated.length; i += 1) {
+              const dx = rotated[i].x - initialBaseline[i].x;
+              const dy = rotated[i].y - initialBaseline[i].y;
+              score += dx * dx + dy * dy;
+            }
+            return { score, sequence: rotated };
+          };
+
+          const forward = scoreAlignment(candidate);
+          const reversed = scoreAlignment([...candidate].reverse());
+          return forward.score <= reversed.score ? forward.sequence : reversed.sequence;
+        };
+
         if (resampledBaseline.length === samples.length) {
-          baselineSamples = resampledBaseline;
+          baselineSamples = alignBaselineSequence(resampledBaseline);
         } else if (resampledBaseline.length) {
           baselineSamples = resampledBaseline;
         }
