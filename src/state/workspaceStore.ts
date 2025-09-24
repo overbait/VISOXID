@@ -14,6 +14,7 @@ import type {
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
+import type { ThicknessOptions } from '../geometry/thickness';
 import { createId } from '../utils/ids';
 import {
   adaptiveSamplePath,
@@ -24,7 +25,8 @@ import {
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
-import { add, alignLoop, clamp, distance, dot, sub } from '../utils/math';
+import { laplacianSmooth } from '../geometry/smoothing';
+import { alignLoop, clamp, distance, dot, normalize, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -104,14 +106,14 @@ const persistLibrary = (library: StoredShape[]): void => {
 
 const createDefaultDirectionWeights = (): DirectionWeight[] =>
   sanitizeDirectionalWeights([
-    createDirectionalWeight('N', 270),
-    createDirectionalWeight('NE', 315),
     createDirectionalWeight('E', 0),
-    createDirectionalWeight('SE', 45),
-    createDirectionalWeight('S', 90),
-    createDirectionalWeight('SW', 135),
+    createDirectionalWeight('NE', 45),
+    createDirectionalWeight('N', 90),
+    createDirectionalWeight('NW', 135),
     createDirectionalWeight('W', 180),
-    createDirectionalWeight('NW', 225),
+    createDirectionalWeight('SW', 225),
+    createDirectionalWeight('S', 270),
+    createDirectionalWeight('SE', 315),
   ]);
 
 const createDefaultOxidation = (): OxidationSettings => ({
@@ -213,15 +215,23 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
+  thicknessOptions: ThicknessOptions,
 ): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
   const fallbackInner = samples.map((sample) => ({
     x: sample.position.x - sample.normal.x * sample.thickness,
     y: sample.position.y - sample.normal.y * sample.thickness,
   }));
 
+  const outerLoop = samples.map((sample) => sample.position);
+  const outerArea = polygonArea(outerLoop);
+  const orientationSign = outerArea >= 0 ? 1 : -1;
+
   if (!closed || samples.length < 3) {
     return { innerSamples: fallbackInner, polygons: [] };
   }
+
+  const defaultResolution = Math.min(0.5, thicknessOptions.uniformThickness / 4);
+  const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
 
   const TAU = Math.PI * 2;
   const EPS = 1e-6;
@@ -354,7 +364,18 @@ const deriveInnerGeometry = (
     normal: sample.normal,
   }));
 
-  const candidateInner: Vec2[] = samples.map((sample, index) => {
+  const denseLoop: Vec2[] = [];
+
+  const appendToDenseLoop = (points: Vec2[]): void => {
+    for (const point of points) {
+      const last = denseLoop.at(-1);
+      if (!last || distance(last, point) > Math.max(resolution * 0.25, 0.01)) {
+        denseLoop.push(point);
+      }
+    }
+  };
+
+  const sampledInner: Vec2[] = samples.map((sample, index) => {
     const circle = circles[index];
     if (circle.radius <= EPS) {
       return fallbackInner[index];
@@ -381,9 +402,6 @@ const deriveInnerGeometry = (
 
     const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
     const inwardArc = arcs.find((arc) => angleInArc(inwardAngle, arc));
-    let chosenAngle: number | null = null;
-
-    const inwardCandidate = inwardArc ? clampAngleToArc(inwardAngle, inwardArc) : null;
 
     const arcCandidates = arcs.filter((arc) => {
       const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
@@ -394,15 +412,16 @@ const deriveInnerGeometry = (
 
     const availableArcs = arcCandidates.length ? arcCandidates : arcs;
 
-    if (inwardCandidate !== null) {
-      const preview = toPointOnCircle(circle, inwardCandidate);
-      const direction = sub(preview, sample.position);
-      if (dot(direction, sample.normal) < -EPS) {
-        chosenAngle = inwardCandidate;
+    let selectedArc: Arc | null = null;
+    if (inwardArc) {
+      const mid = wrapAngle(inwardArc.start + (inwardArc.end - inwardArc.start) / 2);
+      const preview = toPointOnCircle(circle, mid);
+      if (dot(sub(preview, sample.position), sample.normal) < -EPS) {
+        selectedArc = inwardArc;
       }
     }
 
-    if (chosenAngle === null && availableArcs.length) {
+    if (!selectedArc && availableArcs.length) {
       let bestArc = availableArcs[0];
       let bestScore = Infinity;
       for (const arc of availableArcs) {
@@ -413,60 +432,203 @@ const deriveInnerGeometry = (
           bestArc = arc;
         }
       }
-      chosenAngle = clampAngleToArc(inwardAngle, bestArc);
+      selectedArc = bestArc;
+    }
+
+    let chosenAngle: number | null = null;
+    if (selectedArc) {
+      chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
+      const span = selectedArc.end - selectedArc.start;
+      const approxLength = circle.radius * span;
+      const subdivisions = Math.max(6, Math.ceil(approxLength / Math.max(resolution, 0.01)));
+      const arcPoints: Vec2[] = [];
+      for (let step = 0; step < subdivisions; step += 1) {
+        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
+        const angle =
+          orientationSign >= 0
+            ? selectedArc.start + span * t
+            : selectedArc.end - span * t;
+        arcPoints.push(toPointOnCircle(circle, angle));
+      }
+      appendToDenseLoop(arcPoints);
     }
 
     if (chosenAngle === null) {
-      return fallbackInner[index];
+      const fallback = fallbackInner[index];
+      appendToDenseLoop([fallback]);
+      return fallback;
     }
 
     const candidate = toPointOnCircle(circle, chosenAngle);
     const direction = sub(candidate, sample.position);
     if (dot(direction, sample.normal) >= -EPS) {
+      appendToDenseLoop([fallbackInner[index]]);
       return fallbackInner[index];
     }
 
     return candidate;
   });
 
-  const laplacianSmooth = (points: Vec2[], iterations = 3, lambda = 0.25): Vec2[] => {
-    if (points.length < 3) return points;
-    let current = points.map((p) => ({ ...p }));
-    for (let iter = 0; iter < iterations; iter += 1) {
-      const next = current.map((point, i) => {
-        const prev = current[(i - 1 + current.length) % current.length];
-        const nextPoint = current[(i + 1) % current.length];
-        const laplace = add(prev, nextPoint);
-        return {
-          x: point.x + lambda * (laplace.x / 2 - point.x),
-          y: point.y + lambda * (laplace.y / 2 - point.y),
-        };
-      });
-      current = next;
+  let seededLoop: Vec2[] = sampledInner;
+  const closedDenseLoop = (() => {
+    if (denseLoop.length < 3) return denseLoop;
+    const first = denseLoop[0];
+    const last = denseLoop.at(-1)!;
+    if (distance(first, last) <= Math.max(resolution * 0.5, 0.02)) {
+      return denseLoop.slice(0, -1);
     }
-    return current;
+    return denseLoop;
+  })();
+
+  if (closedDenseLoop.length >= 3 && samples.length >= 3) {
+    const resampled = resampleClosedPolygon(closedDenseLoop, samples.length);
+    if (resampled.length === samples.length) {
+      seededLoop = resampled;
+    }
+  }
+
+  const projectionLoop = closedDenseLoop.length >= 3 ? closedDenseLoop : seededLoop;
+
+  const cross = (a: Vec2, b: Vec2): number => a.x * b.y - a.y * b.x;
+
+  const raycastDistanceToPolygon = (origin: Vec2, direction: Vec2, polygon: Vec2[]): number | null => {
+    if (polygon.length < 3) return null;
+    const dir = normalize(direction);
+    const count = polygon.length;
+    let best: number | null = null;
+
+    for (let i = 0; i < count; i += 1) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % count];
+      const edge = sub(b, a);
+      const denom = cross(dir, edge);
+      if (Math.abs(denom) <= EPS) {
+        continue;
+      }
+      const diff = sub(a, origin);
+      const t = cross(diff, edge) / denom;
+      const u = cross(diff, dir) / denom;
+      if (t < -EPS) continue;
+      if (u < -EPS || u > 1 + EPS) continue;
+      const distanceAlongRay = Math.max(t, 0);
+      if (best === null || distanceAlongRay < best) {
+        best = distanceAlongRay;
+      }
+    }
+
+    return best;
   };
 
-  const smoothed = laplacianSmooth(candidateInner);
+  const enforceMinimumOffset = (loop: Vec2[], referenceLoop: Vec2[] = loop): Vec2[] => {
+    if (loop.length !== samples.length) {
+      return loop;
+    }
+
+    const polygon = referenceLoop.length >= 3 ? referenceLoop : loop;
+
+    return loop.map((point, index) => {
+      const sample = samples[index];
+      const fallback = fallbackInner[index];
+      const minTravel = Math.max(sample.thickness, 0);
+      const inward = normalize({ x: -sample.normal.x, y: -sample.normal.y });
+
+      const intersectionDistance = raycastDistanceToPolygon(sample.position, inward, polygon);
+      if (intersectionDistance !== null && Number.isFinite(intersectionDistance) && intersectionDistance > EPS) {
+        const travel = Math.max(minTravel, intersectionDistance);
+        return {
+          x: sample.position.x + inward.x * travel,
+          y: sample.position.y + inward.y * travel,
+        };
+      }
+
+      const toPoint = sub(point, sample.position);
+      const inwardDistance = -dot(toPoint, sample.normal);
+      if (!Number.isFinite(inwardDistance) || inwardDistance <= 0) {
+        return fallback;
+      }
+      const travel = Math.max(minTravel, inwardDistance);
+      return {
+        x: sample.position.x - sample.normal.x * travel,
+        y: sample.position.y - sample.normal.y * travel,
+      };
+    });
+  };
+
+  const smoothingAlpha = Math.min(0.2, Math.max(0.05, resolution * 0.4));
+  const smoothingIterations = resolution <= 0.2 ? 2 : 1;
+  const smoothed = laplacianSmooth(seededLoop, smoothingAlpha, smoothingIterations, {
+    closed: true,
+  });
+  const alignedSmooth = alignLoop(smoothed, fallbackInner);
+  const enforced = enforceMinimumOffset(alignedSmooth, projectionLoop);
+
+  const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const onSegment = (a: Vec2, b: Vec2, c: Vec2): boolean =>
+    Math.min(a.x, b.x) - EPS <= c.x && c.x <= Math.max(a.x, b.x) + EPS &&
+    Math.min(a.y, b.y) - EPS <= c.y && c.y <= Math.max(a.y, b.y) + EPS;
+  const segmentsIntersect = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): boolean => {
+    const o1 = orientation(a1, a2, b1);
+    const o2 = orientation(a1, a2, b2);
+    const o3 = orientation(b1, b2, a1);
+    const o4 = orientation(b1, b2, a2);
+
+    const s1 = o1 * o2;
+    const s2 = o3 * o4;
+
+    if (s1 < -EPS && s2 < -EPS) {
+      return true;
+    }
+
+    if (Math.abs(o1) <= EPS && onSegment(a1, a2, b1)) return true;
+    if (Math.abs(o2) <= EPS && onSegment(a1, a2, b2)) return true;
+    if (Math.abs(o3) <= EPS && onSegment(b1, b2, a1)) return true;
+    if (Math.abs(o4) <= EPS && onSegment(b1, b2, a2)) return true;
+
+    return false;
+  };
+
+  const hasSelfIntersections = (loop: Vec2[]): boolean => {
+    if (loop.length < 4) return false;
+    const count = loop.length;
+    for (let i = 0; i < count; i += 1) {
+      const a1 = loop[i];
+      const a2 = loop[(i + 1) % count];
+      for (let j = i + 1; j < count; j += 1) {
+        if (Math.abs(i - j) <= 1) continue;
+        if (i === 0 && j === count - 1) continue;
+        const b1 = loop[j];
+        const b2 = loop[(j + 1) % count];
+        if (segmentsIntersect(a1, a2, b1, b2)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  const needsCleaning = hasSelfIntersections(enforced);
 
   let polygons: Vec2[][] = [];
-  if (smoothed.length >= 3) {
-    polygons = cleanAndSimplifyPolygons(smoothed);
+  if (closedDenseLoop.length >= 3) {
+    const cleaningTolerance = Math.max(resolution, 0.01);
+    polygons = cleanAndSimplifyPolygons(closedDenseLoop, cleaningTolerance);
   }
-  if (!polygons.length && smoothed.length >= 3) {
-    polygons = [smoothed];
+  if (!polygons.length && enforced.length >= 3) {
+    polygons = [enforced];
   }
 
-  let innerSamples = smoothed;
+  let innerSamples = enforced;
 
-  if (polygons.length) {
+  if (needsCleaning && polygons.length) {
     const primary = polygons.reduce((largest, poly) =>
       Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
     polygons[0]);
     if (primary.length >= 3) {
       const resampled = resampleClosedPolygon(primary, samples.length);
       if (resampled.length === samples.length) {
-        innerSamples = alignLoop(resampled, fallbackInner);
+        const realigned = alignLoop(resampled, fallbackInner);
+        innerSamples = enforceMinimumOffset(realigned, primary);
       }
     }
   }
@@ -600,14 +762,19 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     spacing: path.oxidation.evaluationSpacing,
   });
   const normals = recomputeNormals(sampled.samples);
-  const withThickness = evalThickness(normals, {
+  const thicknessOptions: ThicknessOptions = {
     uniformThickness: path.oxidation.thicknessUniformUm,
     weights: path.oxidation.thicknessByDirection.items,
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
     progress,
-  });
+  };
+  const withThickness = evalThickness(normals, thicknessOptions);
 
-  const { innerSamples, polygons } = deriveInnerGeometry(withThickness, path.meta.closed);
+  const { innerSamples, polygons } = deriveInnerGeometry(
+    withThickness,
+    path.meta.closed,
+    thicknessOptions,
+  );
   const length = accumulateLength(withThickness);
   return {
     ...path,
