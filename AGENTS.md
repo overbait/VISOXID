@@ -71,3 +71,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Immediately feed the marched rings through `cleanAndSimplifyPolygons` and choose the dominant loop via absolute area so self-intersections are scrubbed before resampling against the outer samples.
 - The scalar-field gradient must be normalised before looking up directional thickness; keep the `normalize` call so angle lookups remain stable near flat regions.
 - A local `sdf-polygon-2d` module declaration lives under `src/types/`; add new ambient types there when bringing in future untyped geometry helpers.
+
+## 2025-09-25 — SDF dependency hygiene
+
+- `sdf-polygon-2d` expects `point-in-big-polygon` at runtime but omits it from its manifest. Keep `point-in-big-polygon` listed in our own dependencies so Vite’s dev server and build pipeline can resolve the require chain without manual patching.
