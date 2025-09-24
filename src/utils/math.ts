@@ -111,3 +111,35 @@ export const findClosestPointOnPolygon = (point: Vec2, polygon: Vec2[]): Vec2 =>
 
   return closestPoint;
 };
+
+export const alignLoop = (loopToAlign: Vec2[], anchorLoop: Vec2[]): Vec2[] => {
+  if (loopToAlign.length !== anchorLoop.length || loopToAlign.length === 0) {
+    return loopToAlign;
+  }
+
+  let bestLoop = loopToAlign;
+  let bestScore = Infinity;
+
+  const evaluate = (candidate: Vec2[]): number => {
+    let score = 0;
+    for (let i = 0; i < candidate.length; i++) {
+      score += lengthSq(sub(candidate[i], anchorLoop[i]));
+    }
+    return score;
+  };
+
+  const orientations = [loopToAlign, [...loopToAlign].reverse()];
+
+  for (const orientation of orientations) {
+    for (let i = 0; i < orientation.length; i++) {
+      const rotated = orientation.slice(i).concat(orientation.slice(0, i));
+      const score = evaluate(rotated);
+      if (score < bestScore) {
+        bestScore = score;
+        bestLoop = rotated;
+      }
+    }
+  }
+
+  return bestLoop;
+};

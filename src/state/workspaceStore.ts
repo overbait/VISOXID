@@ -22,8 +22,18 @@ import {
   evalThickness,
   polygonArea,
   recomputeNormals,
+  resampleClosedPolygon,
 } from '../geometry';
-import { clamp, distance, normalize, findClosestPointOnPolygon } from '../utils/math';
+import {
+  clamp,
+  distance,
+  normalize,
+  findClosestPointOnPolygon,
+  alignLoop,
+} from '../utils/math';
+import createSDF from 'sdf-polygon-2d';
+import { isoLines } from 'marching-squares';
+import { evalThicknessForAngle, type ThicknessOptions } from '../geometry/thickness';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -239,6 +249,7 @@ const computeCentroid = (points: Vec2[]): Vec2 => {
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
+  thicknessOptions: ThicknessOptions,
 ): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
   if (!closed || samples.length < 3) {
     const innerSamples = samples.map((sample) => ({
@@ -248,40 +259,79 @@ const deriveInnerGeometry = (
     return { innerSamples, polygons: [] };
   }
 
-  // Create a "raw" inner contour by offsetting each sample by its full thickness.
-  // This will have self-intersections, which Clipper will clean up.
-  const rawInnerPoints = samples.map((sample) => ({
-    x: sample.position.x - sample.normal.x * sample.thickness,
-    y: sample.position.y - sample.normal.y * sample.thickness,
-  }));
+  const padding = 15;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sample of samples) {
+    minX = Math.min(minX, sample.position.x);
+    minY = Math.min(minY, sample.position.y);
+    maxX = Math.max(maxX, sample.position.x);
+    maxY = Math.max(maxY, sample.position.y);
+  }
+  minX -= padding;
+  minY -= padding;
+  maxX += padding;
+  maxY += padding;
 
-  // Use Clipper to clean the raw polygon. This resolves all self-intersections.
-  const cleanedPolygons = cleanAndSimplifyPolygons(rawInnerPoints, 0.25);
+  const outerPolygon = samples.map((s) => [s.position.x, s.position.y]);
+  const sdf = createSDF([outerPolygon]);
 
-  if (!cleanedPolygons.length) {
-    return { innerSamples: rawInnerPoints, polygons: [] };
+  const resolution = 0.5;
+  const gridWidth = Math.ceil((maxX - minX) / resolution);
+  const gridHeight = Math.ceil((maxY - minY) / resolution);
+  const scalarField: number[][] = Array.from({ length: gridHeight }, () => Array(gridWidth).fill(0));
+
+  const h = 0.5;
+
+  for (let gy = 0; gy < gridHeight; gy++) {
+    for (let gx = 0; gx < gridWidth; gx++) {
+      const worldX = minX + gx * resolution;
+      const worldY = minY + gy * resolution;
+
+      const sdfValue = sdf(worldX, worldY);
+
+      const gradX = sdf(worldX + h, worldY) - sdf(worldX - h, worldY);
+      const gradY = sdf(worldX, worldY + h) - sdf(worldX, worldY - h);
+      const normalAngle = Math.atan2(gradY, gradX);
+
+      const inwardNormalAngle = normalAngle + Math.PI;
+      const targetThickness = evalThicknessForAngle(inwardNormalAngle, thicknessOptions);
+
+      scalarField[gy][gx] = sdfValue + targetThickness;
+    }
   }
 
-  // Assume the largest resulting polygon is the one we want.
-  const primaryPolygon = cleanedPolygons.reduce((largest, poly) =>
-    Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
-  cleanedPolygons[0]);
+  const rawPolygons = isoLines(scalarField, 0, { noQuadTree: true });
+
+  const toWorld = (p: Vec2): Vec2 => ({
+    x: minX + p.x * resolution,
+    y: minY + p.y * resolution,
+  });
+
+  const polygons = rawPolygons.map((poly) => poly.map(toWorld));
+
+  if (!polygons.length) {
+    return { innerSamples: [], polygons: [] };
+  }
+
+  const primaryPolygon = polygons.reduce((largest, poly) =>
+    poly.length > largest.length ? poly : largest,
+  polygons[0]);
 
   if (primaryPolygon.length < 3) {
-    return { innerSamples: rawInnerPoints, polygons: cleanedPolygons };
+    return { innerSamples: [], polygons: polygons };
   }
 
-  // Map the original outer samples to the new, clean inner polygon.
-  // This preserves the 1-to-1 correspondence needed for rendering the gradient.
-  const innerSamples = samples.map((sample) =>
-    findClosestPointOnPolygon(sample.position, primaryPolygon),
-  );
+  const rawInnerPoints = samples.map((sample) => ({
+      x: sample.position.x - sample.normal.x * sample.thickness,
+      y: sample.position.y - sample.normal.y * sample.thickness,
+    }));
 
-  return {
-    innerSamples,
-    polygons: cleanedPolygons,
-  };
+  const resampled = resampleClosedPolygon(primaryPolygon, samples.length);
+  const innerSamples = alignLoop(resampled, rawInnerPoints);
+
+  return { innerSamples, polygons };
 };
+
 
 const pruneNodeSelection = (
   selection: NodeSelection | null,
@@ -414,9 +464,18 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
     progress,
   });
+
+  const thicknessOptions = {
+    uniformThickness: path.oxidation.thicknessUniformUm,
+    weights: path.oxidation.thicknessByDirection.items,
+    mirrorSymmetry: path.oxidation.mirrorSymmetry,
+    progress,
+  };
+
   const { innerSamples, polygons } = deriveInnerGeometry(
     withThickness,
     path.meta.closed,
+    thicknessOptions,
   );
   const length = accumulateLength(withThickness);
   return {
