@@ -58,3 +58,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2024-06-02 — Clipper offset execution fix
 
 - `computeOffset` must call `ClipperOffset.Execute` with an output array to avoid mutating a numeric delta (the JS port mutates the array argument). Reuse the shared helper and don’t reintroduce the old single-argument form—it hard-crashes the app on startup.
+
+## 2025-02-14 — Multi-loop oxidation alignment rewrite
+
+- `deriveInnerGeometry` now ray-marches each outer sample toward the Clipper inset so multi-lobed baselines keep their own sample groups. Do not short-circuit this cast; directional extras depend on the per-sample hit result.
+- Inner candidates are cleaned per inset loop and resampled back onto the original sample indices. If you tweak this, make sure `innerSamples[i]` still pairs with `samples[i]` even when inset polygons split apart.
+- The grouped cleaning step may return multiple loops—keep assigning anchors by proximity so stray spokes don’t jump across gaps. If you add new filters, preserve this grouping.
