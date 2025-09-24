@@ -24,13 +24,7 @@ import {
   recomputeNormals,
   resampleClosedPolygon,
 } from '../geometry';
-import {
-  clamp,
-  distance,
-  normalize,
-  findClosestPointOnPolygon,
-  alignLoop,
-} from '../utils/math';
+import { clamp, distance, normalize, alignLoop } from '../utils/math';
 import createSDF from 'sdf-polygon-2d';
 import { isoLines } from 'marching-squares';
 import { evalThicknessForAngle, type ThicknessOptions } from '../geometry/thickness';
@@ -219,33 +213,6 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
   });
 };
 
-const computeCentroid = (points: Vec2[]): Vec2 => {
-  if (!points.length) {
-    return { x: 0, y: 0 };
-  }
-  let areaAcc = 0;
-  let cxAcc = 0;
-  let cyAcc = 0;
-  for (let i = 0; i < points.length; i += 1) {
-    const current = points[i];
-    const next = points[(i + 1) % points.length];
-    const cross = current.x * next.y - next.x * current.y;
-    areaAcc += cross;
-    cxAcc += (current.x + next.x) * cross;
-    cyAcc += (current.y + next.y) * cross;
-  }
-  const area = areaAcc / 2;
-  if (Math.abs(area) < 1e-6) {
-    const sum = points.reduce(
-      (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
-      { x: 0, y: 0 },
-    );
-    return { x: sum.x / points.length, y: sum.y / points.length };
-  }
-  const factor = 1 / (6 * area);
-  return { x: cxAcc * factor, y: cyAcc * factor };
-};
-
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
@@ -291,7 +258,8 @@ const deriveInnerGeometry = (
 
       const gradX = sdf(worldX + h, worldY) - sdf(worldX - h, worldY);
       const gradY = sdf(worldX, worldY + h) - sdf(worldX, worldY - h);
-      const normalAngle = Math.atan2(gradY, gradX);
+      const gradient = normalize({ x: gradX, y: gradY });
+      const normalAngle = Math.atan2(gradient.y, gradient.x);
 
       const inwardNormalAngle = normalAngle + Math.PI;
       const targetThickness = evalThicknessForAngle(inwardNormalAngle, thicknessOptions);
@@ -300,21 +268,25 @@ const deriveInnerGeometry = (
     }
   }
 
-  const rawPolygons = isoLines(scalarField, 0, { noQuadTree: true });
+  const rawContours = isoLines(scalarField, [0], { noQuadTree: true })[0] ?? [];
 
-  const toWorld = (p: Vec2): Vec2 => ({
-    x: minX + p.x * resolution,
-    y: minY + p.y * resolution,
+  const toWorld = ([px, py]: [number, number]): Vec2 => ({
+    x: minX + px * resolution,
+    y: minY + py * resolution,
   });
 
-  const polygons = rawPolygons.map((poly) => poly.map(toWorld));
+  const polygons = rawContours.flatMap((ring) => {
+    const worldRing = ring.map(toWorld);
+    const cleaned = cleanAndSimplifyPolygons(worldRing);
+    return cleaned.length ? cleaned : [worldRing];
+  });
 
   if (!polygons.length) {
     return { innerSamples: [], polygons: [] };
   }
 
   const primaryPolygon = polygons.reduce((largest, poly) =>
-    poly.length > largest.length ? poly : largest,
+    Math.abs(polygonArea(poly)) > Math.abs(polygonArea(largest)) ? poly : largest,
   polygons[0]);
 
   if (primaryPolygon.length < 3) {
@@ -322,9 +294,9 @@ const deriveInnerGeometry = (
   }
 
   const rawInnerPoints = samples.map((sample) => ({
-      x: sample.position.x - sample.normal.x * sample.thickness,
-      y: sample.position.y - sample.normal.y * sample.thickness,
-    }));
+    x: sample.position.x - sample.normal.x * sample.thickness,
+    y: sample.position.y - sample.normal.y * sample.thickness,
+  }));
 
   const resampled = resampleClosedPolygon(primaryPolygon, samples.length);
   const innerSamples = alignLoop(resampled, rawInnerPoints);
