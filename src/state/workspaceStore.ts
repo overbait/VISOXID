@@ -208,6 +208,38 @@ const TAU = Math.PI * 2;
 const EPS = 1e-6;
 const OPEN_SEGMENT_SUBDIVISIONS = 10;
 
+const sampleCompassPatch = (
+  center: Vec2,
+  options: ThicknessOptions,
+  resolution: number,
+): Vec2[] => {
+  const segments = Math.max(160, options.weights.length * 16, 200);
+  const points: Vec2[] = [];
+  const minSpacing = Math.max(resolution * 0.5, 0.02);
+  let previous: Vec2 | null = null;
+  for (let i = 0; i < segments; i += 1) {
+    const theta = (i / segments) * TAU;
+    const radius = Math.max(evalThicknessForAngle(theta, options), 0);
+    if (radius <= EPS) continue;
+    const candidate: Vec2 = {
+      x: center.x + Math.cos(theta) * radius,
+      y: center.y + Math.sin(theta) * radius,
+    };
+    if (!previous || distance(previous, candidate) >= minSpacing) {
+      points.push(candidate);
+      previous = candidate;
+    }
+  }
+  if (points.length >= 3) {
+    const first = points[0];
+    const last = points.at(-1)!;
+    if (distance(first, last) < minSpacing) {
+      points.pop();
+    }
+  }
+  return points;
+};
+
 const subdivideSamples = (samples: SamplePoint[], subdivisions: number): SamplePoint[] => {
   if (samples.length < 2 || subdivisions <= 1) {
     return samples.map((sample, index) => ({ ...sample, parameter: index }));
@@ -624,23 +656,14 @@ const deriveInnerGeometry = (
   if (!closed || samples.length < 3) {
     if (samples.length === 1) {
       const center = samples[0].position;
-      const segments = Math.max(160, thicknessOptions.weights.length * 16, 200);
-      const loop: Vec2[] = [];
-      for (let i = 0; i < segments; i += 1) {
-        const theta = (i / segments) * TAU;
-        const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
-        loop.push({
-          x: center.x + Math.cos(theta) * radius,
-          y: center.y + Math.sin(theta) * radius,
-        });
-      }
+      const loop = sampleCompassPatch(center, thicknessOptions, resolution);
       return { innerSamples: [{ ...center }], polygons: loop.length >= 3 ? [loop] : [] };
     }
     if (!samples.length) {
       return { innerSamples: [], polygons: [] };
     }
 
-    const { candidates, denseLoop } = computeCircleEnvelope(
+    const { candidates } = computeCircleEnvelope(
       samples,
       fallbackInner,
       {
@@ -652,7 +675,10 @@ const deriveInnerGeometry = (
     );
 
     const enforced = enforceMinimumOffset(candidates);
-    return { innerSamples: enforced, polygons: denseLoop.length >= 3 ? [denseLoop] : [] };
+    const endpointPolygons = [samples[0], samples.at(-1)!]
+      .map((sample) => sampleCompassPatch(sample.position, thicknessOptions, resolution))
+      .filter((loop) => loop.length >= 3);
+    return { innerSamples: enforced, polygons: endpointPolygons };
   }
 
   const outerLoop = samples.map((sample) => sample.position);
@@ -866,6 +892,7 @@ export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => {
   let sampled = adaptiveSamplePath(path, {
     spacing: path.oxidation.evaluationSpacing,
+    minSamples: path.meta.closed ? undefined : 2,
   });
   if (!path.meta.closed && sampled.samples.length >= 2) {
     sampled = {

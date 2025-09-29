@@ -152,3 +152,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Open polylines now up-sample every path segment into 10 uniform sub-segments before recomputing normals and evaluating compass weights. Preserve this densification when tweaking the pipeline so directional oxidation applies along the full span of straight traces.
 - The open-line inner contour now stitches the per-sample candidates directly—avoid inserting additional smoothing for these paths or thickness variations will smear back into segment averages.
+
+## 2025-10-23 — Endpoint compass patches & open sampling tweaks
+
+- Open paths call the adaptive sampler with a minimal segment count (two samples per span) before applying the 10× subdivision pass so each inserted slice owns its compass evaluation instead of inheriting the earlier Bézier minimum of twelve.
+- Both endpoints of open polylines now spawn compass-driven oxide patches using the same helper as standalone dots. Keep these loops in `innerPolygons` so the canvas can paint endpoint puddles in sync with compass edits.
+- The shared `sampleCompassPatch` helper backs the single-node branch too; update it when adjusting compass resolution so dots and line endpoints stay visually identical.
