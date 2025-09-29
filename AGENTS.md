@@ -103,3 +103,10 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `deriveInnerGeometry` now builds a dense envelope by sampling the visible arcs of each per-sample oxidation circle (minimum six points per segment) before resampling back to the original sample count. Preserve this arc sampling when tuning offsets so the inner contour keeps circular curvature instead of collapsing to straight chords.
 - The dense arc cloud is cleaned separately and exposed through `innerPolygons`; reuse the `closedDenseLoop` helper when exporting or debugging to avoid reintroducing duplicate closing vertices.
 - Arc sampling depends on the outer loop orientation; if you change how samples are ordered, recompute the `orientationSign` in lock-step so arc traversal stays consistent.
+
+## 2025-10-15 — Compass polygon weights & point oxidation
+
+- Directional thickness is now evaluated by interpolating the polygon traced by compass spokes (with the centre treated as `0 μm`) instead of cosine falloffs. When mirroring angles, average the mirrored polygon value with the primary before combining with the uniform baseline.
+- The compass chain toggle now applies linked edits to every heading by the same delta. Adding a heading while linked seeds it with the mean of the existing spokes so the polygon stays watertight.
+- Standalone sample points (paths reduced to a single node) synthesise an oxide patch by sampling the compass polygon into `innerPolygons`. The canvas renderer fills these loops directly for point oxidations—keep this branch intact when reworking contour drawing.
+- The default oxide resolution tightened to `min(0.35, uniform/6)` so envelopes retain more geometry before smoothing; preserve this when tuning tolerances to avoid reintroducing faceting at joins.

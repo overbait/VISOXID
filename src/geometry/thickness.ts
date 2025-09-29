@@ -47,21 +47,44 @@ const toNormalizedWeights = (weights: DirectionWeight[]): NormalizedWeight[] => 
     .sort((a, b) => a.angle - b.angle);
 };
 
-const evaluateDirectional = (
-  theta: number,
-  weights: NormalizedWeight[],
-): { contribution: number; influence: number } => {
-  let contribution = 0;
-  let influence = 0;
-  for (const weight of weights) {
-    const delta = Math.cos(theta - weight.angle);
-    if (delta > 0) {
-      const falloff = delta * delta;
-      contribution += weight.value * falloff;
-      influence += falloff;
+const TAU = Math.PI * 2;
+
+const evaluatePolygon = (theta: number, weights: NormalizedWeight[]): number => {
+  if (!weights.length) return 0;
+  if (weights.length === 1) {
+    return weights[0].value;
+  }
+
+  const wrapped = normalizeAngle(theta);
+  const firstAngle = weights[0].angle;
+  const target = wrapped < firstAngle ? wrapped + TAU : wrapped;
+  const extended: NormalizedWeight[] = [
+    ...weights,
+    { angle: weights[0].angle + TAU, value: weights[0].value },
+  ];
+
+  for (let i = 0; i < extended.length - 1; i += 1) {
+    const a = extended[i];
+    const b = extended[i + 1];
+    if (target >= a.angle && target <= b.angle) {
+      const span = b.angle - a.angle;
+      const t = span <= 1e-6 ? 0 : (target - a.angle) / span;
+      return a.value + (b.value - a.value) * t;
     }
   }
-  return { contribution, influence };
+
+  const shifted = target - TAU;
+  for (let i = 0; i < extended.length - 1; i += 1) {
+    const a = extended[i];
+    const b = extended[i + 1];
+    if (shifted >= a.angle && shifted <= b.angle) {
+      const span = b.angle - a.angle;
+      const t = span <= 1e-6 ? 0 : (shifted - a.angle) / span;
+      return a.value + (b.value - a.value) * t;
+    }
+  }
+
+  return extended[0].value;
 };
 
 const evaluateForAngle = (
@@ -69,15 +92,13 @@ const evaluateForAngle = (
   weights: NormalizedWeight[],
   mirrorSymmetry?: boolean,
 ): number => {
-  const primary = evaluateDirectional(theta, weights);
+  const primary = evaluatePolygon(theta, weights);
   if (!mirrorSymmetry) {
-    return primary.influence > 0 ? primary.contribution / primary.influence : 0;
+    return primary;
   }
   const mirroredTheta = normalizeAngle(Math.PI - theta);
-  const mirrored = evaluateDirectional(mirroredTheta, weights);
-  const combinedContribution = primary.contribution + mirrored.contribution;
-  const combinedInfluence = primary.influence + mirrored.influence;
-  return combinedInfluence > 0 ? combinedContribution / combinedInfluence : 0;
+  const mirrored = evaluatePolygon(mirroredTheta, weights);
+  return (primary + mirrored) / 2;
 };
 
 export const evalThickness = (

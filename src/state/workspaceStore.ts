@@ -21,6 +21,7 @@ import {
   accumulateLength,
   cleanAndSimplifyPolygons,
   evalThickness,
+  evalThicknessForAngle,
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
@@ -227,6 +228,20 @@ const deriveInnerGeometry = (
   const orientationSign = outerArea >= 0 ? 1 : -1;
 
   if (!closed || samples.length < 3) {
+    if (samples.length === 1) {
+      const center = samples[0].position;
+      const segments = Math.max(32, thicknessOptions.weights.length * 8, 48);
+      const loop: Vec2[] = [];
+      for (let i = 0; i < segments; i += 1) {
+        const theta = (i / segments) * Math.PI * 2;
+        const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
+        loop.push({
+          x: center.x - Math.cos(theta) * radius,
+          y: center.y - Math.sin(theta) * radius,
+        });
+      }
+      return { innerSamples: fallbackInner, polygons: loop.length >= 3 ? [loop] : [] };
+    }
     return { innerSamples: fallbackInner, polygons: [] };
   }
 
@@ -252,7 +267,7 @@ const deriveInnerGeometry = (
     });
   };
 
-  const defaultResolution = Math.min(0.5, thicknessOptions.uniformThickness / 4);
+  const defaultResolution = Math.min(0.35, thicknessOptions.uniformThickness / 6);
   const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
 
   const TAU = Math.PI * 2;

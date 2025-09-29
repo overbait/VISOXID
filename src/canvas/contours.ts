@@ -22,6 +22,22 @@ const strokePolyline = (
   ctx.stroke();
 };
 
+const fillPolygon = (
+  ctx: CanvasRenderingContext2D,
+  points: Array<{ x: number; y: number }>,
+  fillStyle: string,
+) => {
+  if (points.length < 3) return;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i += 1) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+};
+
 export const drawContours = (
   ctx: CanvasRenderingContext2D,
   path: PathEntity,
@@ -76,6 +92,18 @@ export const drawContours = (
     }
     ctx.restore();
   };
+
+  const innerPolygons = path.sampled?.innerPolygons ?? [];
+  if (showOxide && innerPolygons.length && outerWorld.length <= 2) {
+    ctx.save();
+    const alpha = selected ? 0.55 : 0.35;
+    const fill = `rgba(37, 99, 235, ${alpha})`;
+    innerPolygons.forEach((poly) => {
+      const screen = poly.map((pt) => worldToCanvas(pt, view));
+      fillPolygon(ctx, screen, fill);
+    });
+    ctx.restore();
+  }
 
   if (mirror?.enabled) {
     const variants = createMirroredVariants(outerWorld, innerWorld, mirror);

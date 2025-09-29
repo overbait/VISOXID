@@ -11,8 +11,9 @@ import { createId } from '../utils/ids';
 
 const CANVAS_SIZE = 260;
 const OUTER_RADIUS = CANVAS_SIZE / 2 - 18;
-const INNER_CLEAR_RADIUS = 34;
-const MIN_SPOKE_LENGTH = 18;
+const CENTER_DOT_RADIUS = 10;
+const MIN_SPOKE_RADIUS = CENTER_DOT_RADIUS + 18;
+const INNER_CLEAR_RADIUS = MIN_SPOKE_RADIUS + 16;
 const ADD_RING_INNER = OUTER_RADIUS - 20;
 const ADD_RING_OUTER = OUTER_RADIUS + 14;
 
@@ -76,10 +77,10 @@ const valueToColor = (value: number): string => {
   return `rgb(${last.color.map((c) => Math.round(c)).join(', ')})`;
 };
 
-const spokeLengthForValue = (value: number): number => {
+const spokeRadiusForValue = (value: number): number => {
   const ratio = Math.min(Math.max(value / 10, 0), 1);
-  const maxLength = OUTER_RADIUS - INNER_CLEAR_RADIUS - 8;
-  return MIN_SPOKE_LENGTH + ratio * Math.max(maxLength, 0);
+  const maxRadius = OUTER_RADIUS - 24;
+  return MIN_SPOKE_RADIUS + ratio * Math.max(maxRadius - MIN_SPOKE_RADIUS, 0);
 };
 
 const smallestAngleDelta = (a: number, b: number): number => {
@@ -139,20 +140,15 @@ export const DirectionalCompass = () => {
         const next = sortByAngle(items);
         const index = next.findIndex((item) => item.id === id);
         if (index === -1) return next;
-        next[index] = { ...next[index], valueUm: clampValue(value) };
-        if (linking && next.length > 1) {
-          const prevIndex = (index - 1 + next.length) % next.length;
-          const nextIndex = (index + 1) % next.length;
-          const adjusted = next[index].valueUm;
-          next[prevIndex] = {
-            ...next[prevIndex],
-            valueUm: (next[prevIndex].valueUm + adjusted) / 2,
-          };
-          next[nextIndex] = {
-            ...next[nextIndex],
-            valueUm: (next[nextIndex].valueUm + adjusted) / 2,
-          };
+        const clamped = clampValue(value);
+        if (linking && next.length > 0) {
+          const delta = clamped - next[index].valueUm;
+          return next.map((item) => ({
+            ...item,
+            valueUm: clampValue(item.valueUm + delta),
+          }));
         }
+        next[index] = { ...next[index], valueUm: clamped };
         return next;
       });
     },
@@ -170,21 +166,18 @@ export const DirectionalCompass = () => {
         }
         const insertIndex = next.findIndex((item) => angle < item.angleDeg);
         const label = nextLabel(next);
+        const baseValue = next.length
+          ? next.reduce((sum, item) => sum + item.valueUm, 0) / next.length
+          : 0;
         const newWeight: DirectionWeight = {
           id: createId('dir'),
           label,
           angleDeg: angle,
-          valueUm: 0,
+          valueUm: linking ? baseValue : 0,
         };
         createdId = newWeight.id;
         const targetIndex = insertIndex === -1 ? next.length : insertIndex;
         next.splice(targetIndex, 0, newWeight);
-        if (linking && next.length > 1) {
-          const prevIndex = (targetIndex - 1 + next.length) % next.length;
-          const nextIndex = (targetIndex + 1) % next.length;
-          const average = (next[prevIndex].valueUm + next[nextIndex].valueUm) / 2;
-          next[targetIndex] = { ...newWeight, valueUm: average };
-        }
         return next;
       });
       if (createdId) {
@@ -293,8 +286,8 @@ export const DirectionalCompass = () => {
   const selectedPopover = useMemo(() => {
     if (!selectedWeight) return null;
     const angleRad = toRadians(selectedWeight.angleDeg);
-    const length = spokeLengthForValue(selectedWeight.valueUm);
-    const anchorRadius = Math.max(INNER_CLEAR_RADIUS + length / 2, INNER_CLEAR_RADIUS + 12);
+    const radius = spokeRadiusForValue(selectedWeight.valueUm);
+    const anchorRadius = Math.max(radius + 24, INNER_CLEAR_RADIUS + 12);
     const anchor = polarToCartesian(angleRad, anchorRadius);
     return { anchor, weight: selectedWeight };
   }, [selectedWeight]);
@@ -388,11 +381,19 @@ export const DirectionalCompass = () => {
             <circle
               cx={CANVAS_SIZE / 2}
               cy={CANVAS_SIZE / 2}
+              r={CENTER_DOT_RADIUS}
+              fill="rgba(37, 99, 235, 0.15)"
+              stroke="rgba(37, 99, 235, 0.4)"
+              strokeWidth={2}
+            />
+            <circle
+              cx={CANVAS_SIZE / 2}
+              cy={CANVAS_SIZE / 2}
               r={INNER_CLEAR_RADIUS}
               fill="rgba(255,255,255,0.85)"
-              stroke="rgba(37, 99, 235, 0.2)"
+              stroke="rgba(37, 99, 235, 0.18)"
               strokeWidth={1}
-              strokeDasharray="6 6"
+              strokeDasharray="10 10"
             />
             {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => {
               const rad = toRadians(angle);
@@ -413,21 +414,21 @@ export const DirectionalCompass = () => {
             })}
             {addPreview && (
               <line
-                x1={polarToCartesian(toRadians(addPreview.angle), OUTER_RADIUS - 6).x}
-                y1={polarToCartesian(toRadians(addPreview.angle), OUTER_RADIUS - 6).y}
-                x2={polarToCartesian(toRadians(addPreview.angle), INNER_CLEAR_RADIUS + MIN_SPOKE_LENGTH).x}
-                y2={polarToCartesian(toRadians(addPreview.angle), INNER_CLEAR_RADIUS + MIN_SPOKE_LENGTH).y}
+                x1={polarToCartesian(toRadians(addPreview.angle), CENTER_DOT_RADIUS).x}
+                y1={polarToCartesian(toRadians(addPreview.angle), CENTER_DOT_RADIUS).y}
+                x2={polarToCartesian(toRadians(addPreview.angle), spokeRadiusForValue(5)).x}
+                y2={polarToCartesian(toRadians(addPreview.angle), spokeRadiusForValue(5)).y}
                 stroke="#2563eb"
                 strokeWidth={5}
                 strokeLinecap="round"
-                opacity={0.5}
+                opacity={0.4}
               />
             )}
             {sortedWeights.map((weight) => {
               const angleRad = toRadians(weight.angleDeg);
-              const length = spokeLengthForValue(weight.valueUm);
-              const start = polarToCartesian(angleRad, OUTER_RADIUS - length);
-              const end = polarToCartesian(angleRad, OUTER_RADIUS - 4);
+              const radius = spokeRadiusForValue(weight.valueUm);
+              const start = polarToCartesian(angleRad, CENTER_DOT_RADIUS);
+              const end = polarToCartesian(angleRad, radius);
               const color = valueToColor(weight.valueUm);
               const isSelected = selectedId === weight.id;
               return (
@@ -447,6 +448,9 @@ export const DirectionalCompass = () => {
               );
             })}
           </svg>
+          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-semibold text-accent">
+            0
+          </div>
           {selectedPopover && (
             <div
               className="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 flex-col gap-2 rounded-2xl border border-border bg-white/95 p-3 shadow"
@@ -492,8 +496,8 @@ export const DirectionalCompass = () => {
           )}
         </div>
         <div className="text-center text-[11px] text-muted">
-          Click a spoke to adjust its μm offset. Use the chain to blend neighbours. Toggle the plus icon and
-          click the outer rim to add a new heading.
+          Click a spoke to adjust its μm offset. Enable the chain to move every heading together. Toggle the plus icon and click
+          the outer rim to add a new heading.
         </div>
       </div>
     </div>
