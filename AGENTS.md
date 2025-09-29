@@ -142,3 +142,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `computeCircleEnvelope` now evaluates arc radii directly from the compass polygon per heading instead of clamping to the sample’s own offset. Leave the min-distance enforcement in `deriveInnerGeometry` to guarantee the requested thickness instead of reintroducing local `Math.max` guards.
 - Dense arc sampling pushes every chosen candidate point into the `denseLoop` and bumps the minimum subdivisions to 12 so closed loops keep enough geometry to avoid collapsing when forms are sealed.
+
+## 2025-10-21 — Inward thickness lookup & endpoint autonomy
+
+- Directional thickness along sampled normals now evaluates the compass profile using the inward heading (`-normal`) so the compass spoke you lengthen matches the side of the oxide that advances. Keep this convention when sampling additional geometry (e.g. probes or exports) so the UI remains intuitive.
+- Automatic endpoint merging has been retired; paths only close when their metadata flag requests it. If you add new gestures that alter node arrays, don’t reintroduce distance-based auto-closing without restoring an explicit opt-in.

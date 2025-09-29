@@ -109,8 +109,8 @@ export const evalThickness = (
   const normalized = toNormalizedWeights(weights);
   const scale = clamp01(progress);
   return samples.map((sample) => {
-    const theta = Math.atan2(sample.normal.y, sample.normal.x);
-    const directional = evaluateForAngle(theta, normalized, mirrorSymmetry);
+    const inwardTheta = Math.atan2(-sample.normal.y, -sample.normal.x);
+    const directional = evaluateForAngle(inwardTheta, normalized, mirrorSymmetry);
     const combined = uniformThickness + directional;
     const scaled = clampThickness(combined * scale);
     return {

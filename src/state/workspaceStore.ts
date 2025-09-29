@@ -32,7 +32,6 @@ import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
 const MAX_THICKNESS_UM = 10;
-const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
@@ -185,21 +184,10 @@ const mergeEndpointsIfClose = (
   nodes: PathNode[],
   alreadyClosed: boolean,
 ): { nodes: PathNode[]; closed: boolean } => {
-  if (nodes.length < 2 || alreadyClosed) {
+  if (alreadyClosed || nodes.length < 2) {
     return { nodes, closed: alreadyClosed };
   }
-  const first = nodes[0];
-  const lastIndex = nodes.length - 1;
-  const last = nodes[lastIndex];
-  if (distance(first.point, last.point) > ENDPOINT_MERGE_THRESHOLD) {
-    return { nodes, closed: false };
-  }
-  const mergedX = (first.point.x + last.point.x) / 2;
-  const mergedY = (first.point.y + last.point.y) / 2;
-  const mergedNodes = [...nodes];
-  mergedNodes[0] = shiftNode(first, mergedX, mergedY);
-  mergedNodes[lastIndex] = shiftNode(last, mergedX, mergedY);
-  return { nodes: mergedNodes, closed: true };
+  return { nodes, closed: false };
 };
 
 const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']): PathNode[] => {
@@ -389,10 +377,8 @@ const computeCircleEnvelope = (
 ): { candidates: Vec2[]; denseLoop: Vec2[] } => {
   const inwardAngles: number[] = [];
 
-  const radiusForAngle = (angle: number): number => {
-    const outwardAngle = wrapAngle(angle + Math.PI);
-    return Math.max(evalThicknessForAngle(outwardAngle, thicknessOptions), 0);
-  };
+  const radiusForAngle = (angle: number): number =>
+    Math.max(evalThicknessForAngle(wrapAngle(angle), thicknessOptions), 0);
 
   const circles: Circle[] = samples.map((sample) => {
     const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
