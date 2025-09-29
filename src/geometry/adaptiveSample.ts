@@ -64,6 +64,61 @@ export const adaptiveSamplePath = (
   return { samples, length: accumulatedLength };
 };
 
+export const samplePathWithUniformSubdivisions = (
+  path: PathEntity,
+  subdivisionsPerSegment: number,
+): { samples: SamplePoint[]; length: number } => {
+  const subdivisions = Math.max(1, Math.floor(subdivisionsPerSegment));
+  const nodes = path.nodes;
+  if (nodes.length < 2) {
+    return { samples: [], length: 0 };
+  }
+
+  const samples: SamplePoint[] = [];
+  let accumulatedLength = 0;
+  const totalSegments = path.meta.closed ? nodes.length : nodes.length - 1;
+
+  for (let i = 0; i < totalSegments; i += 1) {
+    const current = nodes[i];
+    const next = nodes[(i + 1) % nodes.length];
+    const p0 = current.point;
+    const p1 = current.handleOut ?? current.point;
+    const p2 = next.handleIn ?? next.point;
+    const p3 = next.point;
+
+    const curve = new Bezier(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+
+    for (let step = 0; step <= subdivisions; step += 1) {
+      const t = subdivisions <= 1 ? step : step / subdivisions;
+      if (samples.length && step === 0) {
+        continue;
+      }
+      const { x, y } = curve.get(t);
+      const derivative = curve.derivative(t);
+      let tangent = normalize({ x: derivative.x, y: derivative.y });
+      if (!Number.isFinite(tangent.x) || !Number.isFinite(tangent.y)) {
+        const fallback = samples.at(-1)?.tangent;
+        tangent = fallback ?? { x: 1, y: 0 };
+      }
+      const prevPoint = samples.at(-1);
+      if (prevPoint) {
+        accumulatedLength += Math.hypot(x - prevPoint.position.x, y - prevPoint.position.y);
+      }
+      const normal = perpendicular(tangent);
+      samples.push({
+        position: { x, y },
+        tangent,
+        normal,
+        thickness: 0,
+        curvature: estimateCurvature(curve, t),
+        parameter: samples.length,
+      });
+    }
+  }
+
+  return { samples, length: accumulatedLength };
+};
+
 const estimateCurvature = (curve: Bezier, t: number): number => {
   const d = curve.derivative(t);
   const eps = 1e-3;

@@ -141,6 +141,7 @@ export interface WorkspaceSnapshot {
   nodeSelection: NodeSelection | null;
   oxidationProgress: number;
   zoom: number;
+  pan: Vec2;
 }
 
 export interface WorkspaceState {
@@ -162,6 +163,7 @@ export interface WorkspaceState {
   bootstrapped: boolean;
   library: StoredShape[];
   zoom: number;
+  pan: Vec2;
 }
 
 export interface ExportedProject {

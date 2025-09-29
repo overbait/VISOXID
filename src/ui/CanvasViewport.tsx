@@ -57,9 +57,12 @@ export const CanvasViewport = () => {
   const zoom = useWorkspaceStore((state) => state.zoom);
   const setZoom = useWorkspaceStore((state) => state.setZoom);
   const zoomBy = useWorkspaceStore((state) => state.zoomBy);
+  const pan = useWorkspaceStore((state) => state.pan);
+  const panBy = useWorkspaceStore((state) => state.panBy);
   const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
+  const panSession = useRef<{ pointerId: number; lastCanvas: Vec2 } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
 
   useEffect(() => {
@@ -77,7 +80,7 @@ export const CanvasViewport = () => {
   } => {
     const canvas = canvasRef.current;
     if (!canvas) {
-      const view = computeViewTransform(1, 1, zoom);
+      const view = computeViewTransform(1, 1, zoom, pan);
       return { world: { x: 0, y: 0 }, canvas: { x: 0, y: 0 }, view };
     }
     const rect = canvas.getBoundingClientRect();
@@ -85,7 +88,7 @@ export const CanvasViewport = () => {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
-    const view = computeViewTransform(rect.width, rect.height, zoom);
+    const view = computeViewTransform(rect.width, rect.height, zoom, pan);
     const world = canvasToWorld(canvasPoint, view);
     return { world, canvas: canvasPoint, view };
   };
@@ -370,7 +373,12 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { world: position, view } = getPointerContext(event);
+    const { world: position, view, canvas } = getPointerContext(event);
+    if (activeTool === 'pan') {
+      panSession.current = { pointerId: event.pointerId, lastCanvas: canvas };
+      canvasRef.current?.setPointerCapture(event.pointerId);
+      return;
+    }
     if (activeTool === 'measure') {
       const dragId = createId('probe');
       measureStart.current = { origin: position, moved: false };
@@ -443,7 +451,18 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { world: position, view } = getPointerContext(event);
+    const { world: position, view, canvas } = getPointerContext(event);
+    if (activeTool === 'pan') {
+      if (panSession.current) {
+        const last = panSession.current.lastCanvas;
+        const deltaCanvas = { x: canvas.x - last.x, y: canvas.y - last.y };
+        panSession.current.lastCanvas = canvas;
+        if (view.scale > 0) {
+          panBy({ x: -deltaCanvas.x / view.scale, y: -deltaCanvas.y / view.scale });
+        }
+      }
+      return;
+    }
     if (activeTool === 'measure') {
       if (measureStart.current && measurements.dragProbe) {
         const origin = measureStart.current.origin;
@@ -484,6 +503,11 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLCanvasElement>) => {
+    if (activeTool === 'pan') {
+      panSession.current = null;
+      canvasRef.current?.releasePointerCapture(event.pointerId);
+      return;
+    }
     if (activeTool === 'measure') {
       if (measureStart.current) {
         if (measureStart.current.moved && measurements.dragProbe) {
@@ -534,6 +558,12 @@ export const CanvasViewport = () => {
       setDragProbe(null);
     }
   }, [activeTool, setDragProbe, setHoverProbe]);
+
+  useEffect(() => {
+    if (activeTool !== 'pan') {
+      panSession.current = null;
+    }
+  }, [activeTool]);
 
   return (
     <div className="relative aspect-square w-full max-h-[80vh] max-w-[720px] self-start overflow-hidden rounded-3xl border border-border bg-surface shadow-panel">

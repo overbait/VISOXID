@@ -158,3 +158,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Open paths call the adaptive sampler with a minimal segment count (two samples per span) before applying the 10× subdivision pass so each inserted slice owns its compass evaluation instead of inheriting the earlier Bézier minimum of twelve.
 - Both endpoints of open polylines now spawn compass-driven oxide patches using the same helper as standalone dots. Keep these loops in `innerPolygons` so the canvas can paint endpoint puddles in sync with compass edits.
 - The shared `sampleCompassPatch` helper backs the single-node branch too; update it when adjusting compass resolution so dots and line endpoints stay visually identical.
+
+## 2025-10-24 — Uniform open-line sampling & pan tool translation
+
+- Open polylines now sample each original segment with ten uniform slices via `samplePathWithUniformSubdivisions`. Avoid reintroducing adaptive `minSamples` overrides or the hidden oxidation anchors will collapse on short spans.
+- The viewport stores a persistent `pan` offset and the Pan tool drags this translation using pointer capture. Always pass the stored `pan` vector into `computeViewTransform` so rendering, hit-tests, and distance conversions stay aligned.

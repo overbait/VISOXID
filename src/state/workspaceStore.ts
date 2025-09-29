@@ -25,9 +25,10 @@ import {
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
+  samplePathWithUniformSubdivisions,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
-import { add, alignLoop, clamp, distance, dot, lerp, normalize, scale, sub } from '../utils/math';
+import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -238,56 +239,6 @@ const sampleCompassPatch = (
     }
   }
   return points;
-};
-
-const subdivideSamples = (samples: SamplePoint[], subdivisions: number): SamplePoint[] => {
-  if (samples.length < 2 || subdivisions <= 1) {
-    return samples.map((sample, index) => ({ ...sample, parameter: index }));
-  }
-
-  const result: SamplePoint[] = [];
-  const segments = Math.max(1, Math.floor(subdivisions));
-
-  for (let i = 0; i < samples.length - 1; i += 1) {
-    const current = samples[i];
-    const next = samples[i + 1];
-    result.push({ ...current, thickness: 0 });
-
-    for (let step = 1; step < segments; step += 1) {
-      const t = step / segments;
-      const position = lerp(current.position, next.position, t);
-
-      const blendedTangent = add(scale(current.tangent, 1 - t), scale(next.tangent, t));
-      const fallbackDirection = sub(next.position, current.position);
-      let tangent = normalize(blendedTangent);
-      if (Math.abs(tangent.x) <= EPS && Math.abs(tangent.y) <= EPS) {
-        const fallback = normalize(fallbackDirection);
-        tangent = Math.abs(fallback.x) > EPS || Math.abs(fallback.y) > EPS ? fallback : { x: 1, y: 0 };
-      }
-
-      const blendedNormal = add(scale(current.normal, 1 - t), scale(next.normal, t));
-      let normal = normalize(blendedNormal);
-      if (Math.abs(normal.x) <= EPS && Math.abs(normal.y) <= EPS) {
-        normal = { x: -tangent.y, y: tangent.x };
-      }
-
-      const curvature = current.curvature + (next.curvature - current.curvature) * t;
-
-      result.push({
-        position,
-        tangent,
-        normal,
-        thickness: 0,
-        curvature,
-        parameter: 0,
-      });
-    }
-  }
-
-  const last = samples.at(-1)!;
-  result.push({ ...last, thickness: 0 });
-
-  return result.map((sample, index) => ({ ...sample, parameter: index }));
 };
 
 type Arc = { start: number; end: number };
@@ -784,6 +735,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   nodeSelection: null,
   activeTool: 'line',
   zoom: 1,
+  pan: { x: 0, y: 0 },
   grid: {
     visible: true,
     snapToGrid: false,
@@ -844,6 +796,7 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
     : null,
   oxidationProgress: state.oxidationProgress,
   zoom: state.zoom,
+  pan: { ...state.pan },
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
@@ -865,6 +818,8 @@ type WorkspaceActions = {
   setOxidationProgress: (value: number) => void;
   setZoom: (zoom: number) => void;
   zoomBy: (delta: number) => void;
+  setPan: (pan: Vec2) => void;
+  panBy: (delta: Vec2) => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
   setHoverProbe: (probe: MeasurementProbe | null) => void;
   setPinnedProbe: (probe: MeasurementProbe | null) => void;
@@ -890,16 +845,11 @@ type WorkspaceActions = {
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => {
-  let sampled = adaptiveSamplePath(path, {
-    spacing: path.oxidation.evaluationSpacing,
-    minSamples: path.meta.closed ? undefined : 2,
-  });
-  if (!path.meta.closed && sampled.samples.length >= 2) {
-    sampled = {
-      ...sampled,
-      samples: subdivideSamples(sampled.samples, OPEN_SEGMENT_SUBDIVISIONS),
-    };
-  }
+  let sampled = path.meta.closed
+    ? adaptiveSamplePath(path, {
+        spacing: path.oxidation.evaluationSpacing,
+      })
+    : samplePathWithUniformSubdivisions(path, OPEN_SEGMENT_SUBDIVISIONS);
   if (path.nodes.length === 1) {
     const node = path.nodes[0];
     sampled = {
@@ -978,6 +928,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     set((state) => ({
       ...state,
       zoom: clampZoom(state.zoom * delta),
+    })),
+  setPan: (pan) =>
+    set((state) => ({
+      ...state,
+      pan: { x: pan.x, y: pan.y },
+    })),
+  panBy: (delta) =>
+    set((state) => ({
+      ...state,
+      pan: { x: state.pan.x + delta.x, y: state.pan.y + delta.y },
     })),
   addPath: (nodes, overrides) => {
     const mirror = get().mirror;
@@ -1371,6 +1331,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         dirty: true,
         oxidationProgress: previous.oxidationProgress,
         zoom: previous.zoom,
+        pan: { ...previous.pan },
       };
     });
   },
@@ -1394,6 +1355,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         dirty: true,
         oxidationProgress: snapshot.oxidationProgress,
         zoom: snapshot.zoom,
+        pan: { ...snapshot.pan },
       };
     });
   },
@@ -1410,6 +1372,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       future: [],
       dirty: false,
       zoom: clampZoom(payload.zoom ?? 1),
+      pan: payload.pan ? { ...payload.pan } : { x: 0, y: 0 },
     })),
   reset: () =>
     set((state) => ({
