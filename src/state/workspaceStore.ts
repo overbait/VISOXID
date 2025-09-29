@@ -389,17 +389,15 @@ const computeCircleEnvelope = (
 ): { candidates: Vec2[]; denseLoop: Vec2[] } => {
   const inwardAngles: number[] = [];
 
-  const radiusForAngle = (angle: number, sample: SamplePoint): number => {
+  const radiusForAngle = (angle: number): number => {
     const outwardAngle = wrapAngle(angle + Math.PI);
-    const directional = Math.max(evalThicknessForAngle(outwardAngle, thicknessOptions), 0);
-    const fallback = Math.max(sample.thickness, 0);
-    return Math.max(fallback, directional);
+    return Math.max(evalThicknessForAngle(outwardAngle, thicknessOptions), 0);
   };
 
   const circles: Circle[] = samples.map((sample) => {
     const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
     inwardAngles.push(inwardAngle);
-    const baselineRadius = radiusForAngle(inwardAngle, sample);
+    const baselineRadius = radiusForAngle(inwardAngle);
     return {
       center: sample.position,
       radius: baselineRadius,
@@ -422,7 +420,7 @@ const computeCircleEnvelope = (
     const circle = circles[index];
     const fallback = fallbackInner[index] ?? sample.position;
     const inwardAngle = inwardAngles[index] ?? wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
-    const baselineRadius = radiusForAngle(inwardAngle, sample);
+    const baselineRadius = radiusForAngle(inwardAngle);
     if (baselineRadius <= EPS) {
       appendToDenseLoop([fallback]);
       return fallback;
@@ -454,7 +452,7 @@ const computeCircleEnvelope = (
 
     const arcCandidates = arcs.filter((arc) => {
       const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
-      const radius = radiusForAngle(mid, sample);
+      const radius = radiusForAngle(mid);
       if (radius <= EPS) return false;
       if (allowAllAngles) return true;
       const midPoint = toPointOnCircle(circle, mid, radius);
@@ -467,7 +465,7 @@ const computeCircleEnvelope = (
     let selectedArc: Arc | null = null;
     if (inwardArc) {
       const mid = wrapAngle(inwardArc.start + (inwardArc.end - inwardArc.start) / 2);
-      const preview = toPointOnCircle(circle, mid, radiusForAngle(mid, sample));
+      const preview = toPointOnCircle(circle, mid, radiusForAngle(mid));
       if (allowAllAngles || dot(sub(preview, sample.position), sample.normal) < -EPS) {
         selectedArc = inwardArc;
       }
@@ -492,7 +490,7 @@ const computeCircleEnvelope = (
       chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
       const span = selectedArc.end - selectedArc.start;
       const approxLength = baselineRadius * span;
-      const subdivisions = Math.max(6, Math.ceil(approxLength / Math.max(options.resolution, 0.01)));
+      const subdivisions = Math.max(12, Math.ceil(approxLength / Math.max(options.resolution, 0.01)));
       const arcPoints: Vec2[] = [];
       for (let step = 0; step < subdivisions; step += 1) {
         const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
@@ -500,7 +498,7 @@ const computeCircleEnvelope = (
           options.orientationSign >= 0
             ? selectedArc.start + span * t
             : selectedArc.end - span * t;
-        const radius = radiusForAngle(angle, sample);
+        const radius = radiusForAngle(angle);
         if (radius > EPS) {
           arcPoints.push(toPointOnCircle(circle, angle, radius));
         }
@@ -513,12 +511,13 @@ const computeCircleEnvelope = (
       return fallback;
     }
 
-    const candidateRadius = radiusForAngle(chosenAngle, sample);
+    const candidateRadius = radiusForAngle(chosenAngle);
     if (candidateRadius <= EPS) {
       appendToDenseLoop([fallback]);
       return fallback;
     }
     const candidate = toPointOnCircle(circle, chosenAngle, candidateRadius);
+    appendToDenseLoop([candidate]);
     const direction = sub(candidate, sample.position);
     if (!allowAllAngles && dot(direction, sample.normal) >= -EPS) {
       appendToDenseLoop([fallback]);

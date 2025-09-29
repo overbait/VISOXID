@@ -137,3 +137,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - The canvas viewport now stores a `zoom` scalar in workspace state, exposes slider/± controls in the viewport overlay, and honours Ctrl/⌘ + wheel gestures. When using `computeViewTransform`, always pass the current zoom so hit-testing and rendering stay aligned.
 - `computeCircleEnvelope` evaluates the compass polygon per arc direction and, for open paths, samples the full 360° envelope. Keep passing the active `ThicknessOptions` so directional edits immediately bend open-line oxidation.
 - Minimum-offset enforcement preserves tangential displacement; only push samples along their normal when the travelled distance drops below the required thickness. This keeps globally biased oxidations from snapping back to straight lines.
+
+## 2025-10-20 — Compass envelope orientation floor
+
+- `computeCircleEnvelope` now evaluates arc radii directly from the compass polygon per heading instead of clamping to the sample’s own offset. Leave the min-distance enforcement in `deriveInnerGeometry` to guarantee the requested thickness instead of reintroducing local `Math.max` guards.
+- Dense arc sampling pushes every chosen candidate point into the `denseLoop` and bumps the minimum subdivisions to 12 so closed loops keep enough geometry to avoid collapsing when forms are sealed.
