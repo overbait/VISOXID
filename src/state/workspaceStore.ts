@@ -213,210 +213,172 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
   });
 };
 
-const deriveInnerGeometry = (
-  samples: SamplePoint[],
-  closed: boolean,
-  thicknessOptions: ThicknessOptions,
-): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
-  const fallbackInner = samples.map((sample) => ({
-    x: sample.position.x - sample.normal.x * sample.thickness,
-    y: sample.position.y - sample.normal.y * sample.thickness,
-  }));
+const TAU = Math.PI * 2;
+const EPS = 1e-6;
 
-  const outerLoop = samples.map((sample) => sample.position);
-  const outerArea = polygonArea(outerLoop);
-  const orientationSign = outerArea >= 0 ? 1 : -1;
+type Arc = { start: number; end: number };
 
-  const enforceMinimumOffset = (loop: Vec2[]): Vec2[] => {
-    if (loop.length !== samples.length) {
-      return loop;
-    }
+interface Circle {
+  center: Vec2;
+  radius: number;
+  normal: Vec2;
+}
 
-    return loop.map((point, index) => {
-      const sample = samples[index];
-      const fallback = fallbackInner[index];
-      const toPoint = sub(point, sample.position);
-      const inwardDistance = -dot(toPoint, sample.normal);
-      const minTravel = Math.max(sample.thickness, 0);
-      if (!Number.isFinite(inwardDistance) || inwardDistance <= 0) {
-        return fallback;
-      }
-      const travel = Math.max(minTravel, inwardDistance);
-      return {
-        x: sample.position.x - sample.normal.x * travel,
-        y: sample.position.y - sample.normal.y * travel,
-      };
-    });
-  };
-
-  if (!closed || samples.length < 3) {
-    if (samples.length === 1) {
-      const center = samples[0].position;
-      const segments = Math.max(120, thicknessOptions.weights.length * 12, 160);
-      const loop: Vec2[] = [];
-      for (let i = 0; i < segments; i += 1) {
-        const theta = (i / segments) * Math.PI * 2;
-        const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
-        loop.push({
-          x: center.x + Math.cos(theta) * radius,
-          y: center.y + Math.sin(theta) * radius,
-        });
-      }
-      return { innerSamples: fallbackInner, polygons: loop.length >= 3 ? [loop] : [] };
-    }
-    if (!samples.length) {
-      return { innerSamples: fallbackInner, polygons: [] };
-    }
-    const tangential = fallbackInner.map((point, index) => {
-      const sample = samples[index];
-      const tangent = sample.tangent;
-      const tangentLength = Math.hypot(tangent.x, tangent.y);
-      if (tangentLength <= 1e-6) {
-        return point;
-      }
-      const dir = { x: tangent.x / tangentLength, y: tangent.y / tangentLength };
-      const baseAngle = Math.atan2(sample.normal.y, sample.normal.x);
-      const ahead = evalThicknessForAngle(baseAngle + Math.PI / 2, thicknessOptions);
-      const behind = evalThicknessForAngle(baseAngle - Math.PI / 2, thicknessOptions);
-      const delta = ((ahead - behind) / 2) * 0.35;
-      return {
-        x: point.x - dir.x * delta,
-        y: point.y - dir.y * delta,
-      };
-    });
-    const smoothed = laplacianSmooth(tangential, 0.45, 3, { closed: false });
-    const enforced = enforceMinimumOffset(smoothed);
-    return { innerSamples: enforced, polygons: [] };
+const wrapAngle = (angle: number): number => {
+  let wrapped = angle % TAU;
+  if (wrapped < 0) {
+    wrapped += TAU;
   }
+  return wrapped;
+};
 
-  const defaultResolution = Math.min(0.35, thicknessOptions.uniformThickness / 6);
-  const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
+const arcLength = (arc: Arc): number => arc.end - arc.start;
 
-  const TAU = Math.PI * 2;
-  const EPS = 1e-6;
+const pushArc = (arcs: Arc[], start: number, end: number): void => {
+  if (end - start <= EPS) return;
+  arcs.push({ start, end });
+};
 
-  type Arc = { start: number; end: number };
-
-  interface Circle {
-    center: Vec2;
-    radius: number;
-    normal: Vec2;
+const normaliseInterval = (start: number, end: number): Arc[] => {
+  const span = end - start;
+  if (span >= TAU - EPS) {
+    return [{ start: 0, end: TAU }];
   }
+  const s = wrapAngle(start);
+  const e = wrapAngle(end);
+  if (s <= e) {
+    return [{ start: s, end: e }];
+  }
+  return [
+    { start: 0, end: e },
+    { start: s, end: TAU },
+  ];
+};
 
-  const wrapAngle = (angle: number): number => {
-    let wrapped = angle % TAU;
-    if (wrapped < 0) {
-      wrapped += TAU;
+const subtractInterval = (arcs: Arc[], interval: Arc): Arc[] => {
+  const result: Arc[] = [];
+  for (const arc of arcs) {
+    if (interval.end <= arc.start + EPS || interval.start >= arc.end - EPS) {
+      result.push(arc);
+      continue;
     }
-    return wrapped;
-  };
+    if (interval.start > arc.start + EPS) {
+      pushArc(result, arc.start, Math.min(interval.start, arc.end));
+    }
+    if (interval.end < arc.end - EPS) {
+      pushArc(result, Math.max(interval.end, arc.start), arc.end);
+    }
+  }
+  return result;
+};
 
-  const arcLength = (arc: Arc): number => arc.end - arc.start;
+const subtractIntervals = (arcs: Arc[], intervals: Arc[]): Arc[] => {
+  let current = arcs;
+  for (const interval of intervals) {
+    current = subtractInterval(current, interval);
+    if (!current.length) break;
+  }
+  return current;
+};
 
-  const pushArc = (arcs: Arc[], start: number, end: number): void => {
-    if (end - start <= EPS) return;
-    arcs.push({ start, end });
-  };
+const angularDistance = (a: number, b: number): number => {
+  let delta = Math.abs(a - b);
+  if (delta > Math.PI) {
+    delta = TAU - delta;
+  }
+  return delta;
+};
 
-  const normaliseInterval = (start: number, end: number): Arc[] => {
-    const span = end - start;
-    if (span >= TAU - EPS) {
+const angleInArc = (angle: number, arc: Arc): boolean =>
+  angle >= arc.start - EPS && angle <= arc.end + EPS;
+
+const clampAngleToArc = (angle: number, arc: Arc): number => {
+  const length = arcLength(arc);
+  if (length <= EPS * 4) {
+    return wrapAngle(arc.start + length / 2);
+  }
+  if (angle <= arc.start) {
+    return arc.start + EPS;
+  }
+  if (angle >= arc.end) {
+    return arc.end - EPS;
+  }
+  return angle;
+};
+
+const toPointOnCircle = (circle: Circle, angle: number): Vec2 => ({
+  x: circle.center.x + circle.radius * Math.cos(angle),
+  y: circle.center.y + circle.radius * Math.sin(angle),
+});
+
+const computeOcclusionIntervals = (a: Circle, b: Circle): Arc[] => {
+  if (b.radius <= EPS) return [];
+  const centerDist = distance(a.center, b.center);
+  if (centerDist <= EPS) {
+    if (b.radius >= a.radius - EPS) {
       return [{ start: 0, end: TAU }];
     }
-    const s = wrapAngle(start);
-    const e = wrapAngle(end);
-    if (s <= e) {
-      return [{ start: s, end: e }];
+    return [];
+  }
+  if (centerDist >= a.radius + b.radius - EPS) {
+    return [];
+  }
+  if (centerDist <= Math.abs(a.radius - b.radius) - EPS) {
+    if (b.radius >= a.radius) {
+      return [{ start: 0, end: TAU }];
     }
-    return [
-      { start: 0, end: e },
-      { start: s, end: TAU },
-    ];
-  };
+    return [];
+  }
 
-  const subtractInterval = (arcs: Arc[], interval: Arc): Arc[] => {
-    const result: Arc[] = [];
-    for (const arc of arcs) {
-      if (interval.end <= arc.start + EPS || interval.start >= arc.end - EPS) {
-        result.push(arc);
-        continue;
-      }
-      if (interval.start > arc.start + EPS) {
-        pushArc(result, arc.start, Math.min(interval.start, arc.end));
-      }
-      if (interval.end < arc.end - EPS) {
-        pushArc(result, Math.max(interval.end, arc.start), arc.end);
-      }
-    }
-    return result;
-  };
+  const angleToB = Math.atan2(b.center.y - a.center.y, b.center.x - a.center.x);
+  const cosPhi = Math.min(
+    1,
+    Math.max(-1, (a.radius * a.radius + centerDist * centerDist - b.radius * b.radius) / (2 * a.radius * centerDist)),
+  );
+  const phi = Math.acos(cosPhi);
+  return normaliseInterval(angleToB - phi, angleToB + phi);
+};
 
-  const subtractIntervals = (arcs: Arc[], intervals: Arc[]): Arc[] => {
-    let current = arcs;
-    for (const interval of intervals) {
-      current = subtractInterval(current, interval);
-      if (!current.length) break;
-    }
-    return current;
-  };
+const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
+  (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 
-  const computeOcclusionIntervals = (a: Circle, b: Circle): Arc[] => {
-    if (b.radius <= EPS) return [];
-    const centerDist = distance(a.center, b.center);
-    if (centerDist <= EPS) {
-      if (b.radius >= a.radius - EPS) {
-        return [{ start: 0, end: TAU }];
-      }
-      return [];
-    }
-    if (centerDist >= a.radius + b.radius - EPS) {
-      return [];
-    }
-    if (centerDist <= Math.abs(a.radius - b.radius) - EPS) {
-      if (b.radius >= a.radius) {
-        return [{ start: 0, end: TAU }];
-      }
-      return [];
-    }
+const onSegment = (a: Vec2, b: Vec2, c: Vec2): boolean =>
+  Math.min(a.x, b.x) - EPS <= c.x &&
+  c.x <= Math.max(a.x, b.x) + EPS &&
+  Math.min(a.y, b.y) - EPS <= c.y &&
+  c.y <= Math.max(a.y, b.y) + EPS;
 
-    const angleToB = Math.atan2(b.center.y - a.center.y, b.center.x - a.center.x);
-    const cosPhi = Math.min(
-      1,
-      Math.max(-1, (a.radius * a.radius + centerDist * centerDist - b.radius * b.radius) / (2 * a.radius * centerDist)),
-    );
-    const phi = Math.acos(cosPhi);
-    return normaliseInterval(angleToB - phi, angleToB + phi);
-  };
+const segmentsIntersect = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): boolean => {
+  const o1 = orientation(a1, a2, b1);
+  const o2 = orientation(a1, a2, b2);
+  const o3 = orientation(b1, b2, a1);
+  const o4 = orientation(b1, b2, a2);
 
-  const angleInArc = (angle: number, arc: Arc): boolean => angle >= arc.start - EPS && angle <= arc.end + EPS;
+  const s1 = o1 * o2;
+  const s2 = o3 * o4;
 
-  const clampAngleToArc = (angle: number, arc: Arc): number => {
-    const length = arcLength(arc);
-    if (length <= EPS * 4) {
-      return wrapAngle(arc.start + length / 2);
-    }
-    if (angle <= arc.start) {
-      return arc.start + EPS;
-    }
-    if (angle >= arc.end) {
-      return arc.end - EPS;
-    }
-    return angle;
-  };
+  if (s1 < -EPS && s2 < -EPS) {
+    return true;
+  }
 
-  const angularDistance = (a: number, b: number): number => {
-    let delta = Math.abs(a - b);
-    if (delta > Math.PI) {
-      delta = TAU - delta;
-    }
-    return delta;
-  };
+  if (Math.abs(o1) <= EPS && onSegment(a1, a2, b1)) return true;
+  if (Math.abs(o2) <= EPS && onSegment(a1, a2, b2)) return true;
+  if (Math.abs(o3) <= EPS && onSegment(b1, b2, a1)) return true;
+  if (Math.abs(o4) <= EPS && onSegment(b1, b2, a2)) return true;
 
-  const toPointOnCircle = (circle: Circle, angle: number): Vec2 => ({
-    x: circle.center.x + circle.radius * Math.cos(angle),
-    y: circle.center.y + circle.radius * Math.sin(angle),
-  });
+  return false;
+};
 
+interface EnvelopeOptions {
+  orientationSign: number;
+  resolution: number;
+}
+
+const computeCircleEnvelope = (
+  samples: SamplePoint[],
+  fallbackInner: Vec2[],
+  options: EnvelopeOptions,
+): { candidates: Vec2[]; denseLoop: Vec2[] } => {
   const circles: Circle[] = samples.map((sample) => ({
     center: sample.position,
     radius: Math.max(sample.thickness, 0),
@@ -428,16 +390,18 @@ const deriveInnerGeometry = (
   const appendToDenseLoop = (points: Vec2[]): void => {
     for (const point of points) {
       const last = denseLoop.at(-1);
-      if (!last || distance(last, point) > Math.max(resolution * 0.25, 0.01)) {
+      if (!last || distance(last, point) > Math.max(options.resolution * 0.25, 0.01)) {
         denseLoop.push(point);
       }
     }
   };
 
-  const sampledInner: Vec2[] = samples.map((sample, index) => {
+  const candidates = samples.map((sample, index) => {
     const circle = circles[index];
+    const fallback = fallbackInner[index] ?? sample.position;
     if (circle.radius <= EPS) {
-      return fallbackInner[index];
+      appendToDenseLoop([fallback]);
+      return fallback;
     }
 
     let arcs: Arc[] = [{ start: 0, end: TAU }];
@@ -446,8 +410,10 @@ const deriveInnerGeometry = (
       const other = circles[j];
       if (other.radius <= EPS) continue;
       const occluded = computeOcclusionIntervals(circle, other);
-      arcs = subtractIntervals(arcs, occluded);
-      if (!arcs.length) break;
+      if (occluded.length) {
+        arcs = subtractIntervals(arcs, occluded);
+        if (!arcs.length) break;
+      }
     }
 
     arcs = arcs
@@ -499,12 +465,12 @@ const deriveInnerGeometry = (
       chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
       const span = selectedArc.end - selectedArc.start;
       const approxLength = circle.radius * span;
-      const subdivisions = Math.max(6, Math.ceil(approxLength / Math.max(resolution, 0.01)));
+      const subdivisions = Math.max(6, Math.ceil(approxLength / Math.max(options.resolution, 0.01)));
       const arcPoints: Vec2[] = [];
       for (let step = 0; step < subdivisions; step += 1) {
         const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
         const angle =
-          orientationSign >= 0
+          options.orientationSign >= 0
             ? selectedArc.start + span * t
             : selectedArc.end - span * t;
         arcPoints.push(toPointOnCircle(circle, angle));
@@ -513,7 +479,6 @@ const deriveInnerGeometry = (
     }
 
     if (chosenAngle === null) {
-      const fallback = fallbackInner[index];
       appendToDenseLoop([fallback]);
       return fallback;
     }
@@ -521,76 +486,131 @@ const deriveInnerGeometry = (
     const candidate = toPointOnCircle(circle, chosenAngle);
     const direction = sub(candidate, sample.position);
     if (dot(direction, sample.normal) >= -EPS) {
-      appendToDenseLoop([fallbackInner[index]]);
-      return fallbackInner[index];
+      appendToDenseLoop([fallback]);
+      return fallback;
     }
 
     return candidate;
   });
 
-  let seededLoop: Vec2[] = sampledInner;
-  const closedDenseLoop = (() => {
+  const dense = (() => {
     if (denseLoop.length < 3) return denseLoop;
     const first = denseLoop[0];
     const last = denseLoop.at(-1)!;
-    if (distance(first, last) <= Math.max(resolution * 0.5, 0.02)) {
+    if (distance(first, last) <= Math.max(options.resolution * 0.5, 0.02)) {
       return denseLoop.slice(0, -1);
     }
     return denseLoop;
   })();
 
+  return { candidates, denseLoop: dense };
+};
+
+const deriveInnerGeometry = (
+  samples: SamplePoint[],
+  closed: boolean,
+  thicknessOptions: ThicknessOptions,
+): { innerSamples: Vec2[]; polygons: Vec2[][] } => {
+  const fallbackInner = samples.map((sample) => ({
+    x: sample.position.x - sample.normal.x * sample.thickness,
+    y: sample.position.y - sample.normal.y * sample.thickness,
+  }));
+
+  const defaultResolution = Math.min(0.35, thicknessOptions.uniformThickness / 6);
+  const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
+
+  const enforceMinimumOffset = (loop: Vec2[]): Vec2[] => {
+    if (loop.length !== samples.length) {
+      return loop;
+    }
+
+    return loop.map((point, index) => {
+      const sample = samples[index];
+      const fallback = fallbackInner[index];
+      const toPoint = sub(point, sample.position);
+      const inwardDistance = -dot(toPoint, sample.normal);
+      const minTravel = Math.max(sample.thickness, 0);
+      if (!Number.isFinite(inwardDistance) || inwardDistance <= 0) {
+        return fallback;
+      }
+      const travel = Math.max(minTravel, inwardDistance);
+      return {
+        x: sample.position.x - sample.normal.x * travel,
+        y: sample.position.y - sample.normal.y * travel,
+      };
+    });
+  };
+
+  if (!closed || samples.length < 3) {
+    if (samples.length === 1) {
+      const center = samples[0].position;
+      const segments = Math.max(120, thicknessOptions.weights.length * 12, 160);
+      const loop: Vec2[] = [];
+      for (let i = 0; i < segments; i += 1) {
+        const theta = (i / segments) * TAU;
+        const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
+        loop.push({
+          x: center.x + Math.cos(theta) * radius,
+          y: center.y + Math.sin(theta) * radius,
+        });
+      }
+      return { innerSamples: [{ ...center }], polygons: loop.length >= 3 ? [loop] : [] };
+    }
+    if (!samples.length) {
+      return { innerSamples: [], polygons: [] };
+    }
+
+    const { candidates, denseLoop } = computeCircleEnvelope(samples, fallbackInner, {
+      orientationSign: 1,
+      resolution,
+    });
+
+    const smoothingIterations = Math.min(3, Math.max(1, Math.round(samples.length / 12)));
+    const smoothed = laplacianSmooth(candidates, 0.38, smoothingIterations, { closed: false });
+    const enforced = enforceMinimumOffset(smoothed);
+    return { innerSamples: enforced, polygons: denseLoop.length >= 3 ? [denseLoop] : [] };
+  }
+
+  const outerLoop = samples.map((sample) => sample.position);
+  const outerArea = polygonArea(outerLoop);
+  const orientationSign = outerArea >= 0 ? 1 : -1;
+
+  const { candidates, denseLoop } = computeCircleEnvelope(samples, fallbackInner, {
+    orientationSign,
+    resolution,
+  });
+
+  let seededLoop: Vec2[] = candidates;
+  const closedDenseLoop = denseLoop;
+
   if (closedDenseLoop.length >= 3 && samples.length >= 3) {
     const resampled = resampleClosedPolygon(closedDenseLoop, samples.length);
     if (resampled.length === samples.length) {
-      seededLoop = resampled;
+      const realigned = alignLoop(resampled, fallbackInner);
+      seededLoop = enforceMinimumOffset(realigned);
     }
   }
 
-  const smoothingAlpha = Math.min(0.2, Math.max(0.05, resolution * 0.4));
-  const smoothingIterations = resolution <= 0.2 ? 2 : 1;
+  const smoothingIterations = samples.length > 120 ? 2 : 1;
+  const smoothingAlpha = samples.length > 200 ? 0.3 : 0.42;
   const smoothed = laplacianSmooth(seededLoop, smoothingAlpha, smoothingIterations, {
     closed: true,
   });
-  const alignedSmooth = alignLoop(smoothed, fallbackInner);
-  const enforced = enforceMinimumOffset(alignedSmooth);
-
-  const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
-    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-  const onSegment = (a: Vec2, b: Vec2, c: Vec2): boolean =>
-    Math.min(a.x, b.x) - EPS <= c.x && c.x <= Math.max(a.x, b.x) + EPS &&
-    Math.min(a.y, b.y) - EPS <= c.y && c.y <= Math.max(a.y, b.y) + EPS;
-  const segmentsIntersect = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): boolean => {
-    const o1 = orientation(a1, a2, b1);
-    const o2 = orientation(a1, a2, b2);
-    const o3 = orientation(b1, b2, a1);
-    const o4 = orientation(b1, b2, a2);
-
-    const s1 = o1 * o2;
-    const s2 = o3 * o4;
-
-    if (s1 < -EPS && s2 < -EPS) {
-      return true;
-    }
-
-    if (Math.abs(o1) <= EPS && onSegment(a1, a2, b1)) return true;
-    if (Math.abs(o2) <= EPS && onSegment(a1, a2, b2)) return true;
-    if (Math.abs(o3) <= EPS && onSegment(b1, b2, a1)) return true;
-    if (Math.abs(o4) <= EPS && onSegment(b1, b2, a2)) return true;
-
-    return false;
-  };
+  const enforced = enforceMinimumOffset(smoothed);
 
   const hasSelfIntersections = (loop: Vec2[]): boolean => {
-    if (loop.length < 4) return false;
-    const count = loop.length;
-    for (let i = 0; i < count; i += 1) {
+    if (loop.length < 4) {
+      return false;
+    }
+    for (let i = 0; i < loop.length; i += 1) {
       const a1 = loop[i];
-      const a2 = loop[(i + 1) % count];
-      for (let j = i + 1; j < count; j += 1) {
-        if (Math.abs(i - j) <= 1) continue;
-        if (i === 0 && j === count - 1) continue;
+      const a2 = loop[(i + 1) % loop.length];
+      for (let j = i + 2; j < loop.length; j += 1) {
+        if (!closed && ((i === 0 && j === loop.length - 1) || j === i + 1)) {
+          continue;
+        }
         const b1 = loop[j];
-        const b2 = loop[(j + 1) % count];
+        const b2 = loop[(j + 1) % loop.length];
         if (segmentsIntersect(a1, a2, b1, b2)) {
           return true;
         }

@@ -126,3 +126,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Open-path inner samples receive a tangential offset derived from ±90° compass evaluations before smoothing—retain this blend so straight traces bow in response to directional weights.
 - The measurement tool now queries the global profile along the drag heading. Keep `sampleGlobalThickness` intact so drags anywhere on the canvas reflect oxidation distance rather than raw Euclidean length.
 - Tool ids `pen`/`edit` were replaced with `line`/`dot` (with `dot` spawning a single-node path). Update shortcuts or hit-tests using these ids and leave the square canvas container in place; avoid restoring the old stretched viewport.
+
+## 2025-10-18 — Pointer-oriented probes & open-line envelopes
+
+- Hover measurements now orient toward the pointer direction, sampling the compass contour for that heading and mirroring single-node (dot) paths around their center. Preserve the pointer-driven fallback when tweaking hit-tests so probes appear on any side of a dot.
+- Open polylines derive their inner contour from the same circle-envelope union used for closed loops before enforcing the minimum offset. Avoid reinstating the old tangential delta—straight traces should bow to match the compass hull.

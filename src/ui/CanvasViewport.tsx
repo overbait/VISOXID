@@ -171,24 +171,82 @@ export const CanvasViewport = () => {
         }
       }
     }
+
     if (closest) {
       const sample = closest.sample;
+      const offset = {
+        x: position.x - sample.position.x,
+        y: position.y - sample.position.y,
+      };
+      const offsetLength = Math.hypot(offset.x, offset.y);
+      let orientation = {
+        x: -sample.normal.x,
+        y: -sample.normal.y,
+      };
+      let thickness = sample.thickness;
+
+      if (offsetLength > threshold * 0.35) {
+        const dir = {
+          x: offset.x / offsetLength,
+          y: offset.y / offsetLength,
+        };
+        orientation = { x: -dir.x, y: -dir.y };
+        const angle = Math.atan2(orientation.y, orientation.x);
+        thickness = sampleGlobalThickness(angle);
+      }
+
+      const orientLength = Math.hypot(orientation.x, orientation.y) || 1;
+      const unit = {
+        x: orientation.x / orientLength,
+        y: orientation.y / orientLength,
+      };
       const inner = {
-        x: sample.position.x - sample.normal.x * sample.thickness,
-        y: sample.position.y - sample.normal.y * sample.thickness,
+        x: sample.position.x + unit.x * thickness,
+        y: sample.position.y + unit.y * thickness,
       };
       setHoverProbe({
         id: 'hover',
         a: sample.position,
         b: inner,
-        distance: sample.thickness,
+        distance: thickness,
         angleDeg: toDegrees(Math.atan2(inner.y - sample.position.y, inner.x - sample.position.x)),
-        thicknessA: sample.thickness,
-        thicknessB: sample.thickness,
+        thicknessA: thickness,
+        thicknessB: thickness,
       });
-    } else {
-      setHoverProbe(null);
+      return;
     }
+
+    for (const path of state.paths) {
+      if (path.nodes.length !== 1) continue;
+      const center = path.nodes[0].point;
+      const delta = {
+        x: position.x - center.x,
+        y: position.y - center.y,
+      };
+      const radius = Math.hypot(delta.x, delta.y);
+      if (radius <= 1e-3) continue;
+      const angle = Math.atan2(delta.y, delta.x);
+      const thickness = sampleGlobalThickness(angle);
+      if (thickness <= 0) continue;
+      if (Math.abs(radius - thickness) > threshold * 1.25) continue;
+      const dir = { x: delta.x / radius, y: delta.y / radius };
+      const outer = {
+        x: center.x + dir.x * thickness,
+        y: center.y + dir.y * thickness,
+      };
+      setHoverProbe({
+        id: 'hover',
+        a: outer,
+        b: { ...center },
+        distance: thickness,
+        angleDeg: toDegrees(Math.atan2(center.y - outer.y, center.x - outer.x)),
+        thicknessA: thickness,
+        thicknessB: thickness,
+      });
+      return;
+    }
+
+    setHoverProbe(null);
   };
 
   const updateGeometryForDrag = (target: DragTarget, position: Vec2) => {
