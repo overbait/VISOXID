@@ -110,3 +110,10 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - The compass chain toggle now applies linked edits to every heading by the same delta. Adding a heading while linked seeds it with the mean of the existing spokes so the polygon stays watertight.
 - Standalone sample points (paths reduced to a single node) synthesise an oxide patch by sampling the compass polygon into `innerPolygons`. The canvas renderer fills these loops directly for point oxidations—keep this branch intact when reworking contour drawing.
 - The default oxide resolution tightened to `min(0.35, uniform/6)` so envelopes retain more geometry before smoothing; preserve this when tuning tolerances to avoid reintroducing faceting at joins.
+
+## 2025-10-16 — Compass preview hull & open-path smoothing
+
+- The directional compass now draws the evaluated oxidation hull (including the uniform baseline) so designers can see the active contour while adjusting spokes. When tweaking these visuals, keep the hull in sync with `evalThicknessForAngle` and respect the current oxidation progress scalar.
+- Uniform thickness renders as a dashed ring beneath the hull; leave it in place so users can distinguish baseline thickness from directional spikes.
+- Single-node paths rely on a synthetic sample so the geometry pipeline always produces a dense radial patch—preserve this guard when editing `runGeometryPipeline`.
+- Open polylines smooth their inner samples with a light Laplacian pass before enforcing the minimum offset. Any future changes must keep the smoothing before the min-distance clamp to avoid kinks returning at sharp bends.

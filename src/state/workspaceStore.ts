@@ -227,24 +227,6 @@ const deriveInnerGeometry = (
   const outerArea = polygonArea(outerLoop);
   const orientationSign = outerArea >= 0 ? 1 : -1;
 
-  if (!closed || samples.length < 3) {
-    if (samples.length === 1) {
-      const center = samples[0].position;
-      const segments = Math.max(32, thicknessOptions.weights.length * 8, 48);
-      const loop: Vec2[] = [];
-      for (let i = 0; i < segments; i += 1) {
-        const theta = (i / segments) * Math.PI * 2;
-        const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
-        loop.push({
-          x: center.x - Math.cos(theta) * radius,
-          y: center.y - Math.sin(theta) * radius,
-        });
-      }
-      return { innerSamples: fallbackInner, polygons: loop.length >= 3 ? [loop] : [] };
-    }
-    return { innerSamples: fallbackInner, polygons: [] };
-  }
-
   const enforceMinimumOffset = (loop: Vec2[]): Vec2[] => {
     if (loop.length !== samples.length) {
       return loop;
@@ -266,6 +248,29 @@ const deriveInnerGeometry = (
       };
     });
   };
+
+  if (!closed || samples.length < 3) {
+    if (samples.length === 1) {
+      const center = samples[0].position;
+      const segments = Math.max(120, thicknessOptions.weights.length * 12, 160);
+      const loop: Vec2[] = [];
+      for (let i = 0; i < segments; i += 1) {
+        const theta = (i / segments) * Math.PI * 2;
+        const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
+        loop.push({
+          x: center.x - Math.cos(theta) * radius,
+          y: center.y - Math.sin(theta) * radius,
+        });
+      }
+      return { innerSamples: fallbackInner, polygons: loop.length >= 3 ? [loop] : [] };
+    }
+    if (!samples.length) {
+      return { innerSamples: fallbackInner, polygons: [] };
+    }
+    const smoothed = laplacianSmooth(fallbackInner, 0.45, 2, { closed: false });
+    const enforced = enforceMinimumOffset(smoothed);
+    return { innerSamples: enforced, polygons: [] };
+  }
 
   const defaultResolution = Math.min(0.35, thicknessOptions.uniformThickness / 6);
   const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
@@ -728,9 +733,25 @@ type WorkspaceActions = {
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => {
-  const sampled = adaptiveSamplePath(path, {
+  let sampled = adaptiveSamplePath(path, {
     spacing: path.oxidation.evaluationSpacing,
   });
+  if (path.nodes.length === 1) {
+    const node = path.nodes[0];
+    sampled = {
+      samples: [
+        {
+          position: { ...node.point },
+          tangent: { x: 1, y: 0 },
+          normal: { x: 0, y: -1 },
+          thickness: 0,
+          curvature: 0,
+          parameter: 0,
+        },
+      ],
+      length: 0,
+    };
+  }
   const normals = recomputeNormals(sampled.samples);
   const thicknessOptions: ThicknessOptions = {
     uniformThickness: path.oxidation.thicknessUniformUm,

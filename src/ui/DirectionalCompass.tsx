@@ -5,6 +5,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { evalThicknessForAngle } from '../geometry';
 import type { DirectionWeight } from '../types';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
@@ -13,7 +14,6 @@ const CANVAS_SIZE = 260;
 const OUTER_RADIUS = CANVAS_SIZE / 2 - 18;
 const CENTER_DOT_RADIUS = 10;
 const MIN_SPOKE_RADIUS = CENTER_DOT_RADIUS + 18;
-const INNER_CLEAR_RADIUS = MIN_SPOKE_RADIUS + 16;
 const ADD_RING_INNER = OUTER_RADIUS - 20;
 const ADD_RING_OUTER = OUTER_RADIUS + 14;
 
@@ -98,16 +98,61 @@ export const DirectionalCompass = () => {
   const updateSelected = useWorkspaceStore((state) => state.updateSelectedOxidation);
   const linking = useWorkspaceStore((state) => state.directionalLinking);
   const setLinking = useWorkspaceStore((state) => state.setDirectionalLinking);
+  const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
 
   const activeWeights = selectedPath
     ? selectedPath.oxidation.thicknessByDirection.items
     : defaults.thicknessByDirection.items;
+
+  const activeUniform = selectedPath
+    ? selectedPath.oxidation.thicknessUniformUm
+    : defaults.thicknessUniformUm;
+  const activeMirror = selectedPath
+    ? selectedPath.oxidation.mirrorSymmetry
+    : defaults.mirrorSymmetry;
 
   const sortedWeights = useMemo(() => sortByAngle(activeWeights), [activeWeights]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [addPreview, setAddPreview] = useState<{ angle: number; distance: number } | null>(null);
+
+  const thicknessOptions = useMemo(
+    () => ({
+      uniformThickness: activeUniform,
+      weights: sortedWeights,
+      mirrorSymmetry: activeMirror,
+      progress: oxidationProgress,
+    }),
+    [activeMirror, activeUniform, oxidationProgress, sortedWeights],
+  );
+
+  const previewData = useMemo(() => {
+    const segments = Math.max(96, sortedWeights.length * 12, 160);
+    const points: Array<{ x: number; y: number }> = [];
+    let maxRadius = MIN_SPOKE_RADIUS;
+    for (let i = 0; i < segments; i += 1) {
+      const theta = (i / segments) * Math.PI * 2;
+      const thickness = evalThicknessForAngle(theta, thicknessOptions);
+      const radius = spokeRadiusForValue(thickness);
+      maxRadius = Math.max(maxRadius, radius);
+      points.push(polarToCartesian(theta, radius));
+    }
+    if (!points.length) {
+      return { path: '', maxRadius: MIN_SPOKE_RADIUS };
+    }
+    const [first, ...rest] = points;
+    const path = [
+      `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`,
+      ...rest.map((point) => `L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`),
+      'Z',
+    ].join(' ');
+    return { path, maxRadius };
+  }, [sortedWeights, thicknessOptions]);
+
+  const scaledUniform = clampValue(activeUniform * oxidationProgress);
+  const uniformRadius = spokeRadiusForValue(scaledUniform);
+  const haloRadius = Math.max(previewData.maxRadius, uniformRadius, MIN_SPOKE_RADIUS) + 18;
 
   useEffect(() => {
     if (selectedId && !sortedWeights.some((weight) => weight.id === selectedId)) {
@@ -287,10 +332,10 @@ export const DirectionalCompass = () => {
     if (!selectedWeight) return null;
     const angleRad = toRadians(selectedWeight.angleDeg);
     const radius = spokeRadiusForValue(selectedWeight.valueUm);
-    const anchorRadius = Math.max(radius + 24, INNER_CLEAR_RADIUS + 12);
+    const anchorRadius = Math.max(radius + 24, haloRadius);
     const anchor = polarToCartesian(angleRad, anchorRadius);
     return { anchor, weight: selectedWeight };
-  }, [selectedWeight]);
+  }, [haloRadius, selectedWeight]);
 
   useEffect(() => {
     if (!adding) {
@@ -386,15 +431,26 @@ export const DirectionalCompass = () => {
               stroke="rgba(37, 99, 235, 0.4)"
               strokeWidth={2}
             />
-            <circle
-              cx={CANVAS_SIZE / 2}
-              cy={CANVAS_SIZE / 2}
-              r={INNER_CLEAR_RADIUS}
-              fill="rgba(255,255,255,0.85)"
-              stroke="rgba(37, 99, 235, 0.18)"
-              strokeWidth={1}
-              strokeDasharray="10 10"
-            />
+            {uniformRadius > CENTER_DOT_RADIUS && (
+              <circle
+                cx={CANVAS_SIZE / 2}
+                cy={CANVAS_SIZE / 2}
+                r={uniformRadius}
+                fill="rgba(37, 99, 235, 0.04)"
+                stroke="rgba(37, 99, 235, 0.25)"
+                strokeWidth={1.5}
+                strokeDasharray="6 6"
+              />
+            )}
+            {previewData.path && (
+              <path
+                d={previewData.path}
+                fill="rgba(37, 99, 235, 0.08)"
+                stroke="rgba(37, 99, 235, 0.45)"
+                strokeWidth={2}
+                strokeLinejoin="round"
+              />
+            )}
             {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => {
               const rad = toRadians(angle);
               const inner = polarToCartesian(rad, OUTER_RADIUS - 12);
