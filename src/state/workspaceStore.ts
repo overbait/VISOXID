@@ -27,7 +27,7 @@ import {
   resampleClosedPolygon,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
-import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
+import { add, alignLoop, clamp, distance, dot, lerp, normalize, scale, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -206,6 +206,57 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 
 const TAU = Math.PI * 2;
 const EPS = 1e-6;
+const OPEN_SEGMENT_SUBDIVISIONS = 10;
+
+const subdivideSamples = (samples: SamplePoint[], subdivisions: number): SamplePoint[] => {
+  if (samples.length < 2 || subdivisions <= 1) {
+    return samples.map((sample, index) => ({ ...sample, parameter: index }));
+  }
+
+  const result: SamplePoint[] = [];
+  const segments = Math.max(1, Math.floor(subdivisions));
+
+  for (let i = 0; i < samples.length - 1; i += 1) {
+    const current = samples[i];
+    const next = samples[i + 1];
+    result.push({ ...current, thickness: 0 });
+
+    for (let step = 1; step < segments; step += 1) {
+      const t = step / segments;
+      const position = lerp(current.position, next.position, t);
+
+      const blendedTangent = add(scale(current.tangent, 1 - t), scale(next.tangent, t));
+      const fallbackDirection = sub(next.position, current.position);
+      let tangent = normalize(blendedTangent);
+      if (Math.abs(tangent.x) <= EPS && Math.abs(tangent.y) <= EPS) {
+        const fallback = normalize(fallbackDirection);
+        tangent = Math.abs(fallback.x) > EPS || Math.abs(fallback.y) > EPS ? fallback : { x: 1, y: 0 };
+      }
+
+      const blendedNormal = add(scale(current.normal, 1 - t), scale(next.normal, t));
+      let normal = normalize(blendedNormal);
+      if (Math.abs(normal.x) <= EPS && Math.abs(normal.y) <= EPS) {
+        normal = { x: -tangent.y, y: tangent.x };
+      }
+
+      const curvature = current.curvature + (next.curvature - current.curvature) * t;
+
+      result.push({
+        position,
+        tangent,
+        normal,
+        thickness: 0,
+        curvature,
+        parameter: 0,
+      });
+    }
+  }
+
+  const last = samples.at(-1)!;
+  result.push({ ...last, thickness: 0 });
+
+  return result.map((sample, index) => ({ ...sample, parameter: index }));
+};
 
 type Arc = { start: number; end: number };
 
@@ -600,9 +651,7 @@ const deriveInnerGeometry = (
       thicknessOptions,
     );
 
-    const smoothingIterations = Math.min(3, Math.max(1, Math.round(samples.length / 12)));
-    const smoothed = laplacianSmooth(candidates, 0.38, smoothingIterations, { closed: false });
-    const enforced = enforceMinimumOffset(smoothed);
+    const enforced = enforceMinimumOffset(candidates);
     return { innerSamples: enforced, polygons: denseLoop.length >= 3 ? [denseLoop] : [] };
   }
 
@@ -818,6 +867,12 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
   let sampled = adaptiveSamplePath(path, {
     spacing: path.oxidation.evaluationSpacing,
   });
+  if (!path.meta.closed && sampled.samples.length >= 2) {
+    sampled = {
+      ...sampled,
+      samples: subdivideSamples(sampled.samples, OPEN_SEGMENT_SUBDIVISIONS),
+    };
+  }
   if (path.nodes.length === 1) {
     const node = path.nodes[0];
     sampled = {

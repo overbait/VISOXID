@@ -147,3 +147,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Directional thickness along sampled normals now evaluates the compass profile using the inward heading (`-normal`) so the compass spoke you lengthen matches the side of the oxide that advances. Keep this convention when sampling additional geometry (e.g. probes or exports) so the UI remains intuitive.
 - Automatic endpoint merging has been retired; paths only close when their metadata flag requests it. If you add new gestures that alter node arrays, don’t reintroduce distance-based auto-closing without restoring an explicit opt-in.
+
+## 2025-10-22 — Open-line subdivision fidelity
+
+- Open polylines now up-sample every path segment into 10 uniform sub-segments before recomputing normals and evaluating compass weights. Preserve this densification when tweaking the pipeline so directional oxidation applies along the full span of straight traces.
+- The open-line inner contour now stitches the per-sample candidates directly—avoid inserting additional smoothing for these paths or thickness variations will smear back into segment averages.
