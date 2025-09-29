@@ -4,8 +4,8 @@ import type { ToolId } from '../types';
 
 const keyMap: Record<string, ToolId> = {
   v: 'select',
-  p: 'pen',
-  e: 'edit',
+  l: 'line',
+  d: 'dot',
   o: 'oxidize',
   m: 'measure',
 };

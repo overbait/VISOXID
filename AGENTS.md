@@ -117,3 +117,12 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Uniform thickness renders as a dashed ring beneath the hull; leave it in place so users can distinguish baseline thickness from directional spikes.
 - Single-node paths rely on a synthetic sample so the geometry pipeline always produces a dense radial patch—preserve this guard when editing `runGeometryPipeline`.
 - Open polylines smooth their inner samples with a light Laplacian pass before enforcing the minimum offset. Any future changes must keep the smoothing before the min-distance clamp to avoid kinks returning at sharp bends.
+
+## 2025-10-17 — Global compass inspector & measurement alignment
+
+- The compass card now edits a single global oxidation profile. Updating spokes, uniform thickness, or mirror symmetry must route through `updateOxidationDefaults`, which propagates the merged settings to every path via `applyGlobalOxidation`. Do not reintroduce per-path overrides.
+- Compass spokes expose their label, angle, and μm contribution inside the inspector beneath the dial. Preserve the angle collision guard (0.5° minimum separation) when extending these controls.
+- Point oxidation loops use the compass orientation directly (`center + cos/sin`). Keep this sign so the canvas profile matches the compass preview.
+- Open-path inner samples receive a tangential offset derived from ±90° compass evaluations before smoothing—retain this blend so straight traces bow in response to directional weights.
+- The measurement tool now queries the global profile along the drag heading. Keep `sampleGlobalThickness` intact so drags anywhere on the canvas reflect oxidation distance rather than raw Euclidean length.
+- Tool ids `pen`/`edit` were replaced with `line`/`dot` (with `dot` spawning a single-node path). Update shortcuts or hit-tests using these ids and leave the square canvas container in place; avoid restoring the old stretched viewport.

@@ -90,26 +90,15 @@ const smallestAngleDelta = (a: number, b: number): number => {
 
 export const DirectionalCompass = () => {
   const defaults = useWorkspaceStore((state) => state.oxidationDefaults);
-  const selectedPath = useWorkspaceStore((state) => {
-    const first = state.selectedPathIds[0];
-    return first ? state.paths.find((path) => path.meta.id === first) ?? null : null;
-  });
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
-  const updateSelected = useWorkspaceStore((state) => state.updateSelectedOxidation);
   const linking = useWorkspaceStore((state) => state.directionalLinking);
   const setLinking = useWorkspaceStore((state) => state.setDirectionalLinking);
   const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
 
-  const activeWeights = selectedPath
-    ? selectedPath.oxidation.thicknessByDirection.items
-    : defaults.thicknessByDirection.items;
+  const activeWeights = defaults.thicknessByDirection.items;
 
-  const activeUniform = selectedPath
-    ? selectedPath.oxidation.thicknessUniformUm
-    : defaults.thicknessUniformUm;
-  const activeMirror = selectedPath
-    ? selectedPath.oxidation.mirrorSymmetry
-    : defaults.mirrorSymmetry;
+  const activeUniform = defaults.thicknessUniformUm;
+  const activeMirror = defaults.mirrorSymmetry;
 
   const sortedWeights = useMemo(() => sortByAngle(activeWeights), [activeWeights]);
 
@@ -152,8 +141,6 @@ export const DirectionalCompass = () => {
 
   const scaledUniform = clampValue(activeUniform * oxidationProgress);
   const uniformRadius = spokeRadiusForValue(scaledUniform);
-  const haloRadius = Math.max(previewData.maxRadius, uniformRadius, MIN_SPOKE_RADIUS) + 18;
-
   useEffect(() => {
     if (selectedId && !sortedWeights.some((weight) => weight.id === selectedId)) {
       setSelectedId(null);
@@ -168,15 +155,8 @@ export const DirectionalCompass = () => {
           items: nextItems,
         },
       });
-      if (selectedPath) {
-        updateSelected({
-          thicknessByDirection: {
-            items: nextItems,
-          },
-        });
-      }
     },
-    [sortedWeights, selectedPath, updateDefaults, updateSelected],
+    [sortedWeights, updateDefaults],
   );
 
   const handleValueChange = useCallback(
@@ -323,19 +303,45 @@ export const DirectionalCompass = () => {
     [handleValueChange, sortedWeights],
   );
 
+  const handleAngleChange = useCallback(
+    (id: string, value: number) => {
+      applyWeights((items) => {
+        const next = sortByAngle(items);
+        const index = next.findIndex((item) => item.id === id);
+        if (index === -1) return next;
+        const angle = wrapAngle(value);
+        if (
+          next.some(
+            (item, itemIndex) => itemIndex !== index && smallestAngleDelta(item.angleDeg, angle) < 0.5,
+          )
+        ) {
+          return next;
+        }
+        next[index] = { ...next[index], angleDeg: angle };
+        return sortByAngle(next);
+      });
+    },
+    [applyWeights],
+  );
+
+  const handleLabelChange = useCallback(
+    (id: string, value: string) => {
+      const trimmed = value.trim().toUpperCase().slice(0, 2) || '?';
+      applyWeights((items) => {
+        const next = sortByAngle(items);
+        const index = next.findIndex((item) => item.id === id);
+        if (index === -1) return next;
+        next[index] = { ...next[index], label: trimmed };
+        return next;
+      });
+    },
+    [applyWeights],
+  );
+
   const selectedWeight = useMemo(
     () => sortedWeights.find((item) => item.id === selectedId) ?? null,
     [selectedId, sortedWeights],
   );
-
-  const selectedPopover = useMemo(() => {
-    if (!selectedWeight) return null;
-    const angleRad = toRadians(selectedWeight.angleDeg);
-    const radius = spokeRadiusForValue(selectedWeight.valueUm);
-    const anchorRadius = Math.max(radius + 24, haloRadius);
-    const anchor = polarToCartesian(angleRad, anchorRadius);
-    return { anchor, weight: selectedWeight };
-  }, [haloRadius, selectedWeight]);
 
   useEffect(() => {
     if (!adding) {
@@ -348,9 +354,7 @@ export const DirectionalCompass = () => {
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="section-title">Directional weights</div>
-          <div className="text-xs text-muted">
-            {selectedPath ? selectedPath.meta.name : 'Scene defaults'} · {sortedWeights.length} headings
-          </div>
+          <div className="text-xs text-muted">Global oxidation profile · {sortedWeights.length} headings</div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -507,21 +511,47 @@ export const DirectionalCompass = () => {
           <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-semibold text-accent">
             0
           </div>
-          {selectedPopover && (
-            <div
-              className="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 flex-col gap-2 rounded-2xl border border-border bg-white/95 p-3 shadow"
-              style={{ left: selectedPopover.anchor.x, top: selectedPopover.anchor.y }}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-center justify-between gap-3 text-[11px] font-semibold text-muted">
-                <span>{selectedPopover.weight.label}</span>
-                <span>{selectedPopover.weight.angleDeg.toFixed(1)}°</span>
-              </div>
+          {adding && (
+            <div className="pointer-events-none absolute inset-0 rounded-full border-2 border-dashed border-accent/40" />
+          )}
+        </div>
+        <div className="text-center text-[11px] text-muted">
+          Click a spoke to adjust its μm offset below. Enable the chain to move every heading together. Toggle the plus icon
+          and click the outer rim to add a new heading.
+        </div>
+      </div>
+      <div className="rounded-2xl border border-border/70 bg-white/80 p-4">
+        {selectedWeight ? (
+          <div className="flex flex-col gap-3 text-xs text-muted">
+            <div className="flex items-center gap-2">
+              <label className="flex w-20 flex-col text-[11px] font-semibold text-muted">
+                Label
+                <input
+                  type="text"
+                  maxLength={2}
+                  value={selectedWeight.label}
+                  onChange={(event) => handleLabelChange(selectedWeight.id, event.target.value)}
+                  className="mt-1 rounded-full border border-border px-3 py-1 text-sm font-semibold text-text focus:border-accent focus:outline-none"
+                />
+              </label>
+              <label className="flex flex-1 flex-col text-[11px] font-semibold text-muted">
+                Angle (°)
+                <input
+                  type="number"
+                  step={0.1}
+                  value={selectedWeight.angleDeg.toFixed(1)}
+                  onChange={(event) => handleAngleChange(selectedWeight.id, Number(event.target.value))}
+                  className="mt-1 rounded-full border border-border px-3 py-1 text-sm font-semibold text-text focus:border-accent focus:outline-none"
+                />
+              </label>
+            </div>
+            <div className="flex items-center gap-2 text-[11px] font-semibold text-muted">
+              <span className="w-20">Thickness</span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
-                  onClick={() => handleNudge(selectedPopover.weight.id, -0.1)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
+                  onClick={() => handleNudge(selectedWeight.id, -0.1)}
                 >
                   –
                 </button>
@@ -530,31 +560,29 @@ export const DirectionalCompass = () => {
                   min={0}
                   max={10}
                   step={0.1}
-                  value={selectedPopover.weight.valueUm.toFixed(1)}
-                  onChange={(event) =>
-                    handleValueChange(selectedPopover.weight.id, Number(event.target.value))
-                  }
-                  className="w-20 rounded-full border border-border px-3 py-1 text-center text-sm font-semibold text-text focus:border-accent focus:outline-none"
+                  value={selectedWeight.valueUm.toFixed(1)}
+                  onChange={(event) => handleValueChange(selectedWeight.id, Number(event.target.value))}
+                  className="w-24 rounded-full border border-border px-3 py-1 text-center text-sm font-semibold text-text focus:border-accent focus:outline-none"
                 />
                 <button
                   type="button"
-                  className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
-                  onClick={() => handleNudge(selectedPopover.weight.id, 0.1)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
+                  onClick={() => handleNudge(selectedWeight.id, 0.1)}
                 >
                   +
                 </button>
               </div>
-              <div className="text-[10px] text-muted">Press Delete to remove · value in μm</div>
+              <span className="text-[11px] text-muted">μm</span>
             </div>
-          )}
-          {adding && (
-            <div className="pointer-events-none absolute inset-0 rounded-full border-2 border-dashed border-accent/40" />
-          )}
-        </div>
-        <div className="text-center text-[11px] text-muted">
-          Click a spoke to adjust its μm offset. Enable the chain to move every heading together. Toggle the plus icon and click
-          the outer rim to add a new heading.
-        </div>
+            <div className="rounded-xl bg-accentSoft/40 px-3 py-2 text-[10px] text-muted">
+              Delete removes the spoke. Angles wrap automatically; spokes cannot overlap closer than 0.5°.
+            </div>
+          </div>
+        ) : (
+          <div className="text-center text-[11px] text-muted">
+            Select a spoke to edit its label, heading angle, and μm contribution. Use the plus rim to add more headings.
+          </div>
+        )}
       </div>
     </div>
   );

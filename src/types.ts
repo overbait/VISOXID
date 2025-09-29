@@ -1,7 +1,7 @@
 export type ToolId =
   | 'select'
-  | 'pen'
-  | 'edit'
+  | 'line'
+  | 'dot'
   | 'measure'
   | 'oxidize'
   | 'pan'

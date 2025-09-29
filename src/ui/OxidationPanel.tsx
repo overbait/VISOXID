@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import type { OxidationSettings } from '../types';
 import { useWorkspaceStore } from '../state';
 
 const formatValue = (value: number) => value.toFixed(1);
@@ -9,18 +8,7 @@ export const OxidationPanel = () => {
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
   const oxidationVisible = useWorkspaceStore((state) => state.oxidationVisible);
   const toggleVisible = useWorkspaceStore((state) => state.toggleOxidationVisible);
-  const selectedPath = useWorkspaceStore((state) => {
-    const first = state.selectedPathIds[0];
-    return first ? state.paths.find((path) => path.meta.id === first) ?? null : null;
-  });
-  const updateSelectedOxidation = useWorkspaceStore((state) => state.updateSelectedOxidation);
-
-  const active = selectedPath?.oxidation ?? defaults;
-
-  const applyToSelected = (settings: Partial<OxidationSettings>) => {
-    if (!selectedPath) return;
-    updateSelectedOxidation(settings);
-  };
+  const active = defaults;
 
   const directionValues = useMemo(
     () => active.thicknessByDirection.items.map((item) => item.valueUm),
@@ -72,7 +60,6 @@ export const OxidationPanel = () => {
           onChange={(value) => {
             const clamped = Math.min(10, Math.max(0, value));
             updateDefaults({ thicknessUniformUm: clamped });
-            applyToSelected({ thicknessUniformUm: clamped });
           }}
         />
       </div>
@@ -87,7 +74,6 @@ export const OxidationPanel = () => {
           checked={active.mirrorSymmetry}
           onChange={(event) => {
             updateDefaults({ mirrorSymmetry: event.target.checked });
-            applyToSelected({ mirrorSymmetry: event.target.checked });
           }}
         />
         Mirror symmetry

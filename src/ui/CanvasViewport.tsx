@@ -10,6 +10,7 @@ import {
   computeViewTransform,
   type ViewTransform,
 } from '../canvas/viewTransform';
+import { evalThicknessForAngle } from '../geometry';
 
 type DragTarget =
   | { kind: 'anchor'; pathId: string; nodeId: string }
@@ -146,6 +147,16 @@ export const CanvasViewport = () => {
     return null;
   };
 
+  const sampleGlobalThickness = (angle: number): number => {
+    const state = useWorkspaceStore.getState();
+    return evalThicknessForAngle(angle, {
+      uniformThickness: state.oxidationDefaults.thicknessUniformUm,
+      weights: state.oxidationDefaults.thicknessByDirection.items,
+      mirrorSymmetry: state.oxidationDefaults.mirrorSymmetry,
+      progress: state.oxidationProgress,
+    });
+  };
+
   const updateHoverMeasurement = (position: Vec2, view: ViewTransform) => {
     if (measureStart.current) return;
     const state = useWorkspaceStore.getState();
@@ -195,7 +206,7 @@ export const CanvasViewport = () => {
     );
   };
 
-  const handlePenInput = (position: Vec2, view: ViewTransform, clicks: number) => {
+  const handleLineInput = (position: Vec2, view: ViewTransform, clicks: number) => {
     const state = useWorkspaceStore.getState();
     const threshold = canvasDistanceToWorld(nodeHitThresholdPx, view);
     const closeThreshold = canvasDistanceToWorld(nodeHitThresholdPx + 4, view);
@@ -305,16 +316,41 @@ export const CanvasViewport = () => {
         b: position,
         distance: 0,
         angleDeg: 0,
+        thicknessA: 0,
+        thicknessB: 0,
       });
       canvasRef.current?.setPointerCapture(event.pointerId);
       return;
     }
-    if (activeTool === 'pen') {
-      handlePenInput(position, view, event.detail);
+    if (activeTool === 'line') {
+      handleLineInput(position, view, event.detail);
       canvasRef.current?.setPointerCapture(event.pointerId);
       return;
     }
-    if (activeTool === 'select' || activeTool === 'edit') {
+    if (activeTool === 'dot') {
+      const node = {
+        id: createId('node'),
+        point: position,
+        handleIn: null,
+        handleOut: null,
+      };
+      const pathId = addPath([node], {
+        meta: {
+          id: createId('path'),
+          name: 'Dot',
+          closed: false,
+          visible: true,
+          locked: false,
+          color: '#2563eb',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      });
+      setSelected([pathId]);
+      setNodeSelection({ pathId, nodeIds: [node.id] });
+      return;
+    }
+    if (activeTool === 'select') {
       const target = hitTestNodes(position, view);
       if (target) {
         dragTarget.current = target;
@@ -327,10 +363,6 @@ export const CanvasViewport = () => {
       const segment = hitTestSegment(position, view);
       if (segment && event.detail >= 2) {
         toggleSegmentCurve(segment.pathId, segment.segmentIndex);
-        setSelected([segment.pathId]);
-        return;
-      }
-      if (activeTool === 'edit' && segment) {
         setSelected([segment.pathId]);
         return;
       }
@@ -350,26 +382,39 @@ export const CanvasViewport = () => {
     const { world: position, view } = getPointerContext(event);
     if (activeTool === 'measure') {
       if (measureStart.current && measurements.dragProbe) {
-        const dist = distance(measureStart.current.origin, position);
-        const angle = toDegrees(
-          Math.atan2(position.y - measureStart.current.origin.y, position.x - measureStart.current.origin.x),
-        );
+        const origin = measureStart.current.origin;
+        const dx = position.x - origin.x;
+        const dy = position.y - origin.y;
+        const rawDistance = distance(origin, position);
         const threshold = canvasDistanceToWorld(4, view);
-        if (!measureStart.current.moved && dist > threshold) {
+        if (!measureStart.current.moved && rawDistance > threshold) {
           measureStart.current.moved = true;
         }
+        const angle = Math.atan2(dy, dx);
+        const thickness = sampleGlobalThickness(angle);
+        const dirLength = Math.hypot(dx, dy);
+        const basis =
+          dirLength > 1e-6
+            ? { x: dx / dirLength, y: dy / dirLength }
+            : { x: Math.cos(angle), y: Math.sin(angle) };
+        const endpoint = {
+          x: origin.x + basis.x * thickness,
+          y: origin.y + basis.y * thickness,
+        };
         setDragProbe({
           ...measurements.dragProbe,
-          b: position,
-          distance: dist,
-          angleDeg: angle,
+          b: endpoint,
+          distance: thickness,
+          angleDeg: toDegrees(angle),
+          thicknessA: thickness,
+          thicknessB: thickness,
         });
       } else {
         updateHoverMeasurement(position, view);
       }
       return;
     }
-    if ((activeTool === 'select' || activeTool === 'edit') && dragTarget.current) {
+    if (activeTool === 'select' && dragTarget.current) {
       updateGeometryForDrag(dragTarget.current, position);
     }
   };
@@ -403,7 +448,7 @@ export const CanvasViewport = () => {
   };
 
   useEffect(() => {
-    if (activeTool !== 'pen') {
+    if (activeTool !== 'line') {
       penDraft.current = null;
       setCursorHint(null);
     }
@@ -418,7 +463,7 @@ export const CanvasViewport = () => {
   }, [activeTool, setDragProbe, setHoverProbe]);
 
   return (
-    <div className="relative h-full min-h-[420px] w-full overflow-hidden rounded-3xl border border-border bg-surface shadow-panel">
+    <div className="relative aspect-square w-full max-h-[80vh] max-w-[720px] self-start overflow-hidden rounded-3xl border border-border bg-surface shadow-panel">
       <canvas
         ref={canvasRef}
         className="h-full w-full touch-none"

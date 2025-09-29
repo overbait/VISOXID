@@ -258,8 +258,8 @@ const deriveInnerGeometry = (
         const theta = (i / segments) * Math.PI * 2;
         const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
         loop.push({
-          x: center.x - Math.cos(theta) * radius,
-          y: center.y - Math.sin(theta) * radius,
+          x: center.x + Math.cos(theta) * radius,
+          y: center.y + Math.sin(theta) * radius,
         });
       }
       return { innerSamples: fallbackInner, polygons: loop.length >= 3 ? [loop] : [] };
@@ -267,7 +267,24 @@ const deriveInnerGeometry = (
     if (!samples.length) {
       return { innerSamples: fallbackInner, polygons: [] };
     }
-    const smoothed = laplacianSmooth(fallbackInner, 0.45, 2, { closed: false });
+    const tangential = fallbackInner.map((point, index) => {
+      const sample = samples[index];
+      const tangent = sample.tangent;
+      const tangentLength = Math.hypot(tangent.x, tangent.y);
+      if (tangentLength <= 1e-6) {
+        return point;
+      }
+      const dir = { x: tangent.x / tangentLength, y: tangent.y / tangentLength };
+      const baseAngle = Math.atan2(sample.normal.y, sample.normal.x);
+      const ahead = evalThicknessForAngle(baseAngle + Math.PI / 2, thicknessOptions);
+      const behind = evalThicknessForAngle(baseAngle - Math.PI / 2, thicknessOptions);
+      const delta = ((ahead - behind) / 2) * 0.35;
+      return {
+        x: point.x - dir.x * delta,
+        y: point.y - dir.y * delta,
+      };
+    });
+    const smoothed = laplacianSmooth(tangential, 0.45, 3, { closed: false });
     const enforced = enforceMinimumOffset(smoothed);
     return { innerSamples: enforced, polygons: [] };
   }
@@ -629,7 +646,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   paths: [],
   selectedPathIds: [],
   nodeSelection: null,
-  activeTool: 'pen',
+  activeTool: 'line',
   grid: {
     visible: true,
     snapToGrid: false,
@@ -776,6 +793,31 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
       innerSamples,
       innerPolygons: polygons,
     },
+  };
+};
+
+const applyGlobalOxidation = (
+  state: WorkspaceState,
+  settings: Partial<OxidationSettings>,
+): WorkspaceState => {
+  const merged = mergeOxidationSettings(state.oxidationDefaults, settings);
+  const now = Date.now();
+  const nextPaths = state.paths.map((path) =>
+    runGeometryPipeline(
+      {
+        ...path,
+        oxidation: cloneOxidationSettings(merged),
+        meta: { ...path.meta, updatedAt: now },
+      },
+      state.oxidationProgress,
+    ),
+  );
+  return {
+    ...state,
+    oxidationDefaults: merged,
+    paths: nextPaths,
+    dirty: true,
+    future: [],
   };
 };
 
@@ -1033,34 +1075,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
     }),
   updateOxidationDefaults: (settings) =>
-    set((state) => ({
-      oxidationDefaults: mergeOxidationSettings(state.oxidationDefaults, settings),
-      dirty: true,
-    })),
+    set((state) => {
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const updated = applyGlobalOxidation(state, settings);
+      return { ...updated, history };
+    }),
   updateSelectedOxidation: (settings) =>
     set((state) => {
-      if (!state.selectedPathIds.length) return state;
       const history = [...state.history, captureSnapshot(state)].slice(-50);
-      const selected = new Set(state.selectedPathIds);
-      const nextPaths = state.paths.map((path) => {
-        if (!selected.has(path.meta.id)) return path;
-        const oxidation = mergeOxidationSettings(path.oxidation, settings);
-        return runGeometryPipeline(
-          {
-            ...path,
-            oxidation,
-            meta: { ...path.meta, updatedAt: Date.now() },
-          },
-          state.oxidationProgress,
-        );
-      });
-      return {
-        ...state,
-        paths: nextPaths,
-        history,
-        future: [],
-        dirty: true,
-      };
+      const updated = applyGlobalOxidation(state, settings);
+      return { ...updated, history };
     }),
   setPathMeta: (id, patch) =>
     set((state) => {
