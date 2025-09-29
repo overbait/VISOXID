@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
 import { createRenderer } from '../canvas/renderer';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
@@ -18,6 +18,9 @@ type DragTarget =
 
 const nodeHitThresholdPx = 12;
 const pathHitThresholdPx = 10;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 8;
+const ZOOM_STEP = 1.1;
 
 const pointSegmentDistance = (p: Vec2, a: Vec2, b: Vec2): number => {
   const ab = { x: b.x - a.x, y: b.y - a.y };
@@ -51,6 +54,9 @@ export const CanvasViewport = () => {
   const toggleSegmentCurve = useWorkspaceStore((state) => state.toggleSegmentCurve);
   const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
   const setOxidationProgress = useWorkspaceStore((state) => state.setOxidationProgress);
+  const zoom = useWorkspaceStore((state) => state.zoom);
+  const setZoom = useWorkspaceStore((state) => state.setZoom);
+  const zoomBy = useWorkspaceStore((state) => state.zoomBy);
   const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
@@ -71,7 +77,7 @@ export const CanvasViewport = () => {
   } => {
     const canvas = canvasRef.current;
     if (!canvas) {
-      const view = computeViewTransform(1, 1);
+      const view = computeViewTransform(1, 1, zoom);
       return { world: { x: 0, y: 0 }, canvas: { x: 0, y: 0 }, view };
     }
     const rect = canvas.getBoundingClientRect();
@@ -79,7 +85,7 @@ export const CanvasViewport = () => {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
-    const view = computeViewTransform(rect.width, rect.height);
+    const view = computeViewTransform(rect.width, rect.height, zoom);
     const world = canvasToWorld(canvasPoint, view);
     return { world, canvas: canvasPoint, view };
   };
@@ -505,6 +511,15 @@ export const CanvasViewport = () => {
     canvasRef.current?.releasePointerCapture(event.pointerId);
   };
 
+  const handleWheel = (event: WheelEvent<HTMLCanvasElement>) => {
+    if (!(event.ctrlKey || event.metaKey)) {
+      return;
+    }
+    event.preventDefault();
+    const factor = event.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+    zoomBy(factor);
+  };
+
   useEffect(() => {
     if (activeTool !== 'line') {
       penDraft.current = null;
@@ -529,6 +544,7 @@ export const CanvasViewport = () => {
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
+        onWheel={handleWheel}
       />
       <div className="pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-2xl border border-border bg-white/85 px-4 py-3 shadow">
         <span className="text-[11px] font-semibold uppercase tracking-widest text-muted">Oxidation timeline</span>
@@ -552,6 +568,36 @@ export const CanvasViewport = () => {
           {activeTool === 'measure' ? 'Click & drag to measure (μm)' : cursorHint}
         </div>
       )}
+      <div className="pointer-events-none absolute bottom-4 right-4 flex flex-col items-end gap-2">
+        <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-border bg-white/85 px-3 py-2 shadow">
+          <button
+            type="button"
+            className="rounded-full border border-border bg-white px-2 py-1 text-xs font-semibold text-muted hover:bg-muted/10"
+            onClick={() => zoomBy(1 / ZOOM_STEP)}
+            disabled={zoom <= MIN_ZOOM + 1e-3}
+          >
+            −
+          </button>
+          <input
+            type="range"
+            min={MIN_ZOOM}
+            max={MAX_ZOOM}
+            step={0.05}
+            value={zoom}
+            onChange={(event) => setZoom(Number(event.target.value))}
+            className="h-1 w-32 accent-accent"
+          />
+          <button
+            type="button"
+            className="rounded-full border border-border bg-white px-2 py-1 text-xs font-semibold text-muted hover:bg-muted/10"
+            onClick={() => zoomBy(ZOOM_STEP)}
+            disabled={zoom >= MAX_ZOOM - 1e-3}
+          >
+            +
+          </button>
+        </div>
+        <span className="pointer-events-none text-[11px] font-semibold text-text">×{zoom.toFixed(2)}</span>
+      </div>
     </div>
   );
 };

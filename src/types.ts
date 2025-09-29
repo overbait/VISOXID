@@ -140,6 +140,7 @@ export interface WorkspaceSnapshot {
   activeTool: ToolId;
   nodeSelection: NodeSelection | null;
   oxidationProgress: number;
+  zoom: number;
 }
 
 export interface WorkspaceState {
@@ -160,6 +161,7 @@ export interface WorkspaceState {
   directionalLinking: boolean;
   bootstrapped: boolean;
   library: StoredShape[];
+  zoom: number;
 }
 
 export interface ExportedProject {

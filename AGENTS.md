@@ -131,3 +131,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Hover measurements now orient toward the pointer direction, sampling the compass contour for that heading and mirroring single-node (dot) paths around their center. Preserve the pointer-driven fallback when tweaking hit-tests so probes appear on any side of a dot.
 - Open polylines derive their inner contour from the same circle-envelope union used for closed loops before enforcing the minimum offset. Avoid reinstating the old tangential delta—straight traces should bow to match the compass hull.
+
+## 2025-10-19 — Global zoom & compass-driven open envelopes
+
+- The canvas viewport now stores a `zoom` scalar in workspace state, exposes slider/± controls in the viewport overlay, and honours Ctrl/⌘ + wheel gestures. When using `computeViewTransform`, always pass the current zoom so hit-testing and rendering stay aligned.
+- `computeCircleEnvelope` evaluates the compass polygon per arc direction and, for open paths, samples the full 360° envelope. Keep passing the active `ThicknessOptions` so directional edits immediately bend open-line oxidation.
+- Minimum-offset enforcement preserves tangential displacement; only push samples along their normal when the travelled distance drops below the required thickness. This keeps globally biased oxidations from snapping back to straight lines.

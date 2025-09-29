@@ -34,8 +34,11 @@ const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 const MAX_THICKNESS_UM = 10;
 const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 8;
 
 const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
+const clampZoom = (value: number): number => clamp(value, MIN_ZOOM, MAX_ZOOM);
 
 const clampAngleDeg = (angleDeg: number): number => {
   let wrapped = angleDeg % 360;
@@ -306,10 +309,13 @@ const clampAngleToArc = (angle: number, arc: Arc): number => {
   return angle;
 };
 
-const toPointOnCircle = (circle: Circle, angle: number): Vec2 => ({
-  x: circle.center.x + circle.radius * Math.cos(angle),
-  y: circle.center.y + circle.radius * Math.sin(angle),
-});
+const toPointOnCircle = (circle: Circle, angle: number, radiusOverride?: number): Vec2 => {
+  const radius = radiusOverride ?? circle.radius;
+  return {
+    x: circle.center.x + radius * Math.cos(angle),
+    y: circle.center.y + radius * Math.sin(angle),
+  };
+};
 
 const computeOcclusionIntervals = (a: Circle, b: Circle): Arc[] => {
   if (b.radius <= EPS) return [];
@@ -372,18 +378,34 @@ const segmentsIntersect = (a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2): boolean => {
 interface EnvelopeOptions {
   orientationSign: number;
   resolution: number;
+  restrictToInward: boolean;
 }
 
 const computeCircleEnvelope = (
   samples: SamplePoint[],
   fallbackInner: Vec2[],
   options: EnvelopeOptions,
+  thicknessOptions: ThicknessOptions,
 ): { candidates: Vec2[]; denseLoop: Vec2[] } => {
-  const circles: Circle[] = samples.map((sample) => ({
-    center: sample.position,
-    radius: Math.max(sample.thickness, 0),
-    normal: sample.normal,
-  }));
+  const inwardAngles: number[] = [];
+
+  const radiusForAngle = (angle: number, sample: SamplePoint): number => {
+    const outwardAngle = wrapAngle(angle + Math.PI);
+    const directional = Math.max(evalThicknessForAngle(outwardAngle, thicknessOptions), 0);
+    const fallback = Math.max(sample.thickness, 0);
+    return Math.max(fallback, directional);
+  };
+
+  const circles: Circle[] = samples.map((sample) => {
+    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
+    inwardAngles.push(inwardAngle);
+    const baselineRadius = radiusForAngle(inwardAngle, sample);
+    return {
+      center: sample.position,
+      radius: baselineRadius,
+      normal: sample.normal,
+    };
+  });
 
   const denseLoop: Vec2[] = [];
 
@@ -399,7 +421,9 @@ const computeCircleEnvelope = (
   const candidates = samples.map((sample, index) => {
     const circle = circles[index];
     const fallback = fallbackInner[index] ?? sample.position;
-    if (circle.radius <= EPS) {
+    const inwardAngle = inwardAngles[index] ?? wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
+    const baselineRadius = radiusForAngle(inwardAngle, sample);
+    if (baselineRadius <= EPS) {
       appendToDenseLoop([fallback]);
       return fallback;
     }
@@ -425,12 +449,15 @@ const computeCircleEnvelope = (
       .filter((arc) => arc.end - arc.start > EPS)
       .sort((a, b) => a.start - b.start);
 
-    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
     const inwardArc = arcs.find((arc) => angleInArc(inwardAngle, arc));
+    const allowAllAngles = !options.restrictToInward;
 
     const arcCandidates = arcs.filter((arc) => {
       const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
-      const midPoint = toPointOnCircle(circle, mid);
+      const radius = radiusForAngle(mid, sample);
+      if (radius <= EPS) return false;
+      if (allowAllAngles) return true;
+      const midPoint = toPointOnCircle(circle, mid, radius);
       const direction = sub(midPoint, sample.position);
       return dot(direction, sample.normal) < -EPS;
     });
@@ -440,8 +467,8 @@ const computeCircleEnvelope = (
     let selectedArc: Arc | null = null;
     if (inwardArc) {
       const mid = wrapAngle(inwardArc.start + (inwardArc.end - inwardArc.start) / 2);
-      const preview = toPointOnCircle(circle, mid);
-      if (dot(sub(preview, sample.position), sample.normal) < -EPS) {
+      const preview = toPointOnCircle(circle, mid, radiusForAngle(mid, sample));
+      if (allowAllAngles || dot(sub(preview, sample.position), sample.normal) < -EPS) {
         selectedArc = inwardArc;
       }
     }
@@ -464,7 +491,7 @@ const computeCircleEnvelope = (
     if (selectedArc) {
       chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
       const span = selectedArc.end - selectedArc.start;
-      const approxLength = circle.radius * span;
+      const approxLength = baselineRadius * span;
       const subdivisions = Math.max(6, Math.ceil(approxLength / Math.max(options.resolution, 0.01)));
       const arcPoints: Vec2[] = [];
       for (let step = 0; step < subdivisions; step += 1) {
@@ -473,7 +500,10 @@ const computeCircleEnvelope = (
           options.orientationSign >= 0
             ? selectedArc.start + span * t
             : selectedArc.end - span * t;
-        arcPoints.push(toPointOnCircle(circle, angle));
+        const radius = radiusForAngle(angle, sample);
+        if (radius > EPS) {
+          arcPoints.push(toPointOnCircle(circle, angle, radius));
+        }
       }
       appendToDenseLoop(arcPoints);
     }
@@ -483,9 +513,14 @@ const computeCircleEnvelope = (
       return fallback;
     }
 
-    const candidate = toPointOnCircle(circle, chosenAngle);
+    const candidateRadius = radiusForAngle(chosenAngle, sample);
+    if (candidateRadius <= EPS) {
+      appendToDenseLoop([fallback]);
+      return fallback;
+    }
+    const candidate = toPointOnCircle(circle, chosenAngle, candidateRadius);
     const direction = sub(candidate, sample.position);
-    if (dot(direction, sample.normal) >= -EPS) {
+    if (!allowAllAngles && dot(direction, sample.normal) >= -EPS) {
       appendToDenseLoop([fallback]);
       return fallback;
     }
@@ -517,7 +552,7 @@ const deriveInnerGeometry = (
   }));
 
   const defaultResolution = Math.min(0.35, thicknessOptions.uniformThickness / 6);
-  const resolution = Math.max(0.05, thicknessOptions.resolution ?? defaultResolution);
+  const resolution = Math.max(0.035, thicknessOptions.resolution ?? defaultResolution);
 
   const enforceMinimumOffset = (loop: Vec2[]): Vec2[] => {
     if (loop.length !== samples.length) {
@@ -530,21 +565,30 @@ const deriveInnerGeometry = (
       const toPoint = sub(point, sample.position);
       const inwardDistance = -dot(toPoint, sample.normal);
       const minTravel = Math.max(sample.thickness, 0);
-      if (!Number.isFinite(inwardDistance) || inwardDistance <= 0) {
+      if (!Number.isFinite(inwardDistance)) {
         return fallback;
       }
-      const travel = Math.max(minTravel, inwardDistance);
-      return {
-        x: sample.position.x - sample.normal.x * travel,
-        y: sample.position.y - sample.normal.y * travel,
-      };
+      if (inwardDistance <= 0) {
+        return {
+          x: sample.position.x - sample.normal.x * minTravel,
+          y: sample.position.y - sample.normal.y * minTravel,
+        };
+      }
+      if (inwardDistance + 1e-5 < minTravel) {
+        const correction = minTravel - inwardDistance;
+        return {
+          x: point.x - sample.normal.x * correction,
+          y: point.y - sample.normal.y * correction,
+        };
+      }
+      return point;
     });
   };
 
   if (!closed || samples.length < 3) {
     if (samples.length === 1) {
       const center = samples[0].position;
-      const segments = Math.max(120, thicknessOptions.weights.length * 12, 160);
+      const segments = Math.max(160, thicknessOptions.weights.length * 16, 200);
       const loop: Vec2[] = [];
       for (let i = 0; i < segments; i += 1) {
         const theta = (i / segments) * TAU;
@@ -560,10 +604,16 @@ const deriveInnerGeometry = (
       return { innerSamples: [], polygons: [] };
     }
 
-    const { candidates, denseLoop } = computeCircleEnvelope(samples, fallbackInner, {
-      orientationSign: 1,
-      resolution,
-    });
+    const { candidates, denseLoop } = computeCircleEnvelope(
+      samples,
+      fallbackInner,
+      {
+        orientationSign: 1,
+        resolution,
+        restrictToInward: false,
+      },
+      thicknessOptions,
+    );
 
     const smoothingIterations = Math.min(3, Math.max(1, Math.round(samples.length / 12)));
     const smoothed = laplacianSmooth(candidates, 0.38, smoothingIterations, { closed: false });
@@ -575,10 +625,16 @@ const deriveInnerGeometry = (
   const outerArea = polygonArea(outerLoop);
   const orientationSign = outerArea >= 0 ? 1 : -1;
 
-  const { candidates, denseLoop } = computeCircleEnvelope(samples, fallbackInner, {
-    orientationSign,
-    resolution,
-  });
+  const { candidates, denseLoop } = computeCircleEnvelope(
+    samples,
+    fallbackInner,
+    {
+      orientationSign,
+      resolution,
+      restrictToInward: true,
+    },
+    thicknessOptions,
+  );
 
   let seededLoop: Vec2[] = candidates;
   const closedDenseLoop = denseLoop;
@@ -667,6 +723,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   selectedPathIds: [],
   nodeSelection: null,
   activeTool: 'line',
+  zoom: 1,
   grid: {
     visible: true,
     snapToGrid: false,
@@ -726,6 +783,7 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
     ? { pathId: state.nodeSelection.pathId, nodeIds: [...state.nodeSelection.nodeIds] }
     : null,
   oxidationProgress: state.oxidationProgress,
+  zoom: state.zoom,
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
@@ -745,6 +803,8 @@ type WorkspaceActions = {
   updateSelectedOxidation: (settings: Partial<OxidationSettings>) => void;
   setDirectionalLinking: (value: boolean) => void;
   setOxidationProgress: (value: number) => void;
+  setZoom: (zoom: number) => void;
+  zoomBy: (delta: number) => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
   setHoverProbe: (probe: MeasurementProbe | null) => void;
   setPinnedProbe: (probe: MeasurementProbe | null) => void;
@@ -846,6 +906,12 @@ const initialLibrary = loadLibrary();
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   ...createEmptyState(initialLibrary),
   setActiveTool: (tool) => set({ activeTool: tool }),
+  setZoom: (zoom) => set((state) => ({ ...state, zoom: clampZoom(zoom) })),
+  zoomBy: (delta) =>
+    set((state) => ({
+      ...state,
+      zoom: clampZoom(state.zoom * delta),
+    })),
   addPath: (nodes, overrides) => {
     const mirror = get().mirror;
     const id = overrides?.meta?.id ?? createId('path');
@@ -1237,6 +1303,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         future: [...state.future, futureSnapshot].slice(-50),
         dirty: true,
         oxidationProgress: previous.oxidationProgress,
+        zoom: previous.zoom,
       };
     });
   },
@@ -1259,6 +1326,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         future: remaining,
         dirty: true,
         oxidationProgress: snapshot.oxidationProgress,
+        zoom: snapshot.zoom,
       };
     });
   },
@@ -1274,6 +1342,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       history: [],
       future: [],
       dirty: false,
+      zoom: clampZoom(payload.zoom ?? 1),
     })),
   reset: () =>
     set((state) => ({
