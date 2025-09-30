@@ -469,6 +469,9 @@ const computeCircleEnvelope = (
       return fallback;
     }
 
+    let bestOpenAngle: number | null = null;
+    let bestOpenRadius = -Infinity;
+
     for (const arc of arcsForDenseLoop) {
       const span = arc.end - arc.start;
       if (span <= EPS) {
@@ -486,6 +489,10 @@ const computeCircleEnvelope = (
         const radius = radiusForAngle(angle);
         if (radius > EPS) {
           arcPoints.push(toPointOnCircle(circle, angle, radius));
+          if (allowAllAngles && radius > bestOpenRadius) {
+            bestOpenRadius = radius;
+            bestOpenAngle = angle;
+          }
         }
       }
       appendToDenseLoop(arcPoints);
@@ -517,7 +524,9 @@ const computeCircleEnvelope = (
     }
 
     let chosenAngle: number | null = null;
-    if (selectedArc) {
+    if (allowAllAngles && bestOpenAngle !== null && bestOpenRadius > EPS) {
+      chosenAngle = bestOpenAngle;
+    } else if (selectedArc) {
       chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
     }
 

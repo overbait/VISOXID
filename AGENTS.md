@@ -152,3 +152,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-11-01 — Global compass orientation for open paths
 
 - Circle envelopes now evaluate compass radii in world space for open paths instead of mirroring across the inward normal. When tuning the solver, keep `options.restrictToInward` as the switch between inward-only (closed loops) and global headings (open traces) so compass edits stay aligned with the same absolute orientation everywhere.
+
+## 2025-11-02 — Open-path envelope maximises global headings
+
+- Open-path circle envelopes now pick the visible heading with the greatest compass radius instead of clamping to the sample’s inward normal. Preserve this maximisation so straight segments continue to follow the global orientation regardless of their tangent direction.
