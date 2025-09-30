@@ -390,8 +390,10 @@ const computeCircleEnvelope = (
   const inwardAngles: number[] = [];
 
   const radiusForAngle = (angle: number): number => {
-    const outwardAngle = wrapAngle(angle + Math.PI);
-    return Math.max(evalThicknessForAngle(outwardAngle, thicknessOptions), 0);
+    const queryAngle = options.restrictToInward
+      ? wrapAngle(angle + Math.PI)
+      : wrapAngle(angle);
+    return Math.max(evalThicknessForAngle(queryAngle, thicknessOptions), 0);
   };
 
   const circles: Circle[] = samples.map((sample) => {

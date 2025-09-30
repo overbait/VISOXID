@@ -147,3 +147,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `computeCircleEnvelope` now feeds every visible arc segment (post-occlusion) into the dense loop, preferring arcs that face inward on open spans. Keep this sweep intact so the dashed oxide contour reflects contributions from all headings without reintroducing the heavy radial spoke sampling.
 - Arc subdivision counts depend on the arc span and current resolution; avoid dropping below two samples per arc or narrow intersections between circles will disappear from the preview.
+
+## 2025-11-01 — Global compass orientation for open paths
+
+- Circle envelopes now evaluate compass radii in world space for open paths instead of mirroring across the inward normal. When tuning the solver, keep `options.restrictToInward` as the switch between inward-only (closed loops) and global headings (open traces) so compass edits stay aligned with the same absolute orientation everywhere.
