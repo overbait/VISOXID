@@ -180,8 +180,13 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-10-27 — Open-line arc maximisation
 
 - Open-path envelope sampling now scans every visible arc for the point that travels furthest along each slice’s inward normal. Preserve this search when tweaking the solver so compass spikes imprint across the full span instead of collapsing to the nearest angle.
-- Arc subdivision honours the resolution floor of `max(resolution * 0.5, 0.005)`; keep this limit so narrow lobes from the compass profile remain in the dense loop.
+- Arc subdivision honours the resolution floor of `max(resolution * 0.5, 0.0005)`; keep this limit so narrow lobes from the compass profile remain in the dense loop.
 
 ## 2025-10-28 — Segment-wide tangent sweeps
 - Open polylines now compare circle tangents between every pair of subdivision samples within the same segment when picking oxidation anchors. Retain this sweep—or replace it with an equally comprehensive check—so distant spikes along the dashed preview still extend to their furthest compass-driven travel.
 - Tangent refinement projects onto the compass hull via `radiusForAngle`. If you adjust how the compass polygon is sampled, keep this helper aligned or the tangent checks will fall back to stale radii.
+
+## 2025-10-29 — Ultra-dense open-line resolution
+- Open polylines subdivide each source segment into **300** uniform slices before recomputing normals so every hidden oxidation probe honours tiny compass spikes. Preserve this density (or justify an equivalent resolution) when tuning sampling.
+- Circle-envelope arc marching now uses a 10× finer spatial step (down to 0.0005 μm) and keeps dense-loop deduplication to 0.001 μm, ensuring dashed previews match highly detailed compass patterns without smoothing away protrusions.
+- Compass patches around dots and endpoints adopt the same tighter spacing floor (0.002 μm). If performance tweaks are necessary, profile before relaxing these tolerances and document any trade-offs.

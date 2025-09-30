@@ -197,7 +197,7 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 
 const TAU = Math.PI * 2;
 const EPS = 1e-6;
-const OPEN_SEGMENT_SUBDIVISIONS = 30;
+const OPEN_SEGMENT_SUBDIVISIONS = 300;
 
 const sampleCompassPatch = (
   center: Vec2,
@@ -206,7 +206,7 @@ const sampleCompassPatch = (
 ): Vec2[] => {
   const segments = Math.max(160, options.weights.length * 16, 200);
   const points: Vec2[] = [];
-  const minSpacing = Math.max(resolution * 0.5, 0.02);
+  const minSpacing = Math.max(resolution * 0.5, 0.002);
   let previous: Vec2 | null = null;
   for (let i = 0; i < segments; i += 1) {
     const theta = (i / segments) * TAU;
@@ -463,7 +463,7 @@ const computeCircleEnvelope = (
   const appendToDenseLoop = (points: Vec2[]): void => {
     for (const point of points) {
       const last = denseLoop.at(-1);
-      if (!last || distance(last, point) > Math.max(options.resolution * 0.25, 0.01)) {
+      if (!last || distance(last, point) > Math.max(options.resolution * 0.25, 0.001)) {
         denseLoop.push(point);
       }
     }
@@ -579,7 +579,7 @@ const computeCircleEnvelope = (
       if (span <= EPS) {
         return;
       }
-      const stepBase = Math.max(options.resolution * 0.5, 0.005);
+      const stepBase = Math.max(options.resolution * 0.5, 0.0005);
       const radiusStart = radiusForAngle(arc.start);
       const radiusEnd = radiusForAngle(arc.end);
       const approxRadius = Math.max(baselineRadius, radiusStart, radiusEnd);
@@ -635,7 +635,7 @@ const computeCircleEnvelope = (
     if (denseLoop.length < 3) return denseLoop;
     const first = denseLoop[0];
     const last = denseLoop.at(-1)!;
-    if (distance(first, last) <= Math.max(options.resolution * 0.5, 0.02)) {
+    if (distance(first, last) <= Math.max(options.resolution * 0.5, 0.002)) {
       return denseLoop.slice(0, -1);
     }
     return denseLoop;
@@ -655,7 +655,7 @@ const deriveInnerGeometry = (
   }));
 
   const defaultResolution = Math.min(0.35, thicknessOptions.uniformThickness / 6);
-  const resolution = Math.max(0.035, thicknessOptions.resolution ?? defaultResolution);
+  const resolution = Math.max(0.0035, thicknessOptions.resolution ?? defaultResolution);
 
   const enforceMinimumOffset = (loop: Vec2[]): Vec2[] => {
     if (loop.length !== samples.length) {
