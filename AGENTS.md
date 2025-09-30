@@ -181,3 +181,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Open-path envelope sampling now scans every visible arc for the point that travels furthest along each slice’s inward normal. Preserve this search when tweaking the solver so compass spikes imprint across the full span instead of collapsing to the nearest angle.
 - Arc subdivision honours the resolution floor of `max(resolution * 0.5, 0.005)`; keep this limit so narrow lobes from the compass profile remain in the dense loop.
+
+## 2025-10-28 — Segment-wide tangent sweeps
+- Open polylines now compare circle tangents between every pair of subdivision samples within the same segment when picking oxidation anchors. Retain this sweep—or replace it with an equally comprehensive check—so distant spikes along the dashed preview still extend to their furthest compass-driven travel.
+- Tangent refinement projects onto the compass hull via `radiusForAngle`. If you adjust how the compass polygon is sampled, keep this helper aligned or the tangent checks will fall back to stale radii.

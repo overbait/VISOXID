@@ -735,43 +735,51 @@ const deriveInnerGeometry = (
       }
     };
 
-    for (let i = 0; i < samples.length - 1; i += 1) {
-      const current = samples[i];
-      const next = samples[i + 1];
-      if (current.segmentIndex !== next.segmentIndex) {
+    const projectTangent = (
+      index: number,
+      circle: Circle,
+      sample: SamplePoint,
+      tangentPoint: Vec2,
+    ): void => {
+      const angle = Math.atan2(tangentPoint.y - circle.center.y, tangentPoint.x - circle.center.x);
+      const radius = context.radiusForAngle(angle);
+      if (radius <= EPS) {
+        return;
+      }
+      const refined = toPointOnCircle(circle, angle, radius);
+      if (dot(sub(refined, sample.position), sample.normal) < -EPS) {
+        tryUpdate(index, refined);
+      }
+    };
+
+    let start = 0;
+    while (start < samples.length) {
+      const segmentIndex = samples[start].segmentIndex;
+      if (segmentIndex === undefined) {
+        start += 1;
         continue;
       }
+      let end = start + 1;
+      while (end < samples.length && samples[end].segmentIndex === segmentIndex) {
+        end += 1;
+      }
 
-      const tangents = computeCircleTangents(context.circles[i], context.circles[i + 1]);
-      for (const tangent of tangents) {
-        const { a: tangentA, b: tangentB } = tangent;
-
-        const angleA = Math.atan2(
-          tangentA.y - context.circles[i].center.y,
-          tangentA.x - context.circles[i].center.x,
-        );
-        const angleB = Math.atan2(
-          tangentB.y - context.circles[i + 1].center.y,
-          tangentB.x - context.circles[i + 1].center.x,
-        );
-
-        const radiusA = context.radiusForAngle(angleA);
-        const radiusB = context.radiusForAngle(angleB);
-
-        if (radiusA > EPS) {
-          const refinedA = toPointOnCircle(context.circles[i], angleA, radiusA);
-          if (dot(sub(refinedA, current.position), current.normal) < -EPS) {
-            tryUpdate(i, refinedA);
+      for (let i = start; i < end; i += 1) {
+        for (let j = i + 1; j < end; j += 1) {
+          const circleA = context.circles[i];
+          const circleB = context.circles[j];
+          if (!circleA || !circleB) {
+            continue;
           }
-        }
-
-        if (radiusB > EPS) {
-          const refinedB = toPointOnCircle(context.circles[i + 1], angleB, radiusB);
-          if (dot(sub(refinedB, next.position), next.normal) < -EPS) {
-            tryUpdate(i + 1, refinedB);
+          const tangents = computeCircleTangents(circleA, circleB);
+          for (const tangent of tangents) {
+            projectTangent(i, circleA, samples[i], tangent.a);
+            projectTangent(j, circleB, samples[j], tangent.b);
           }
         }
       }
+
+      start = end;
     }
 
     const enforced = enforceMinimumOffset(bestPoints);
