@@ -143,54 +143,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `computeCircleEnvelope` now evaluates arc radii directly from the compass polygon per heading instead of clamping to the sample’s own offset. Leave the min-distance enforcement in `deriveInnerGeometry` to guarantee the requested thickness instead of reintroducing local `Math.max` guards.
 - Dense arc sampling pushes every chosen candidate point into the `denseLoop` and bumps the minimum subdivisions to 12 so closed loops keep enough geometry to avoid collapsing when forms are sealed.
 
-## 2025-10-21 — Inward thickness lookup & endpoint autonomy
+## 2025-10-31 — Circle envelope arc coverage
 
-- Directional thickness along sampled normals now evaluates the compass profile using the inward heading (`-normal`) so the compass spoke you lengthen matches the side of the oxide that advances. Keep this convention when sampling additional geometry (e.g. probes or exports) so the UI remains intuitive.
-- Automatic endpoint merging has been retired; paths only close when their metadata flag requests it. If you add new gestures that alter node arrays, don’t reintroduce distance-based auto-closing without restoring an explicit opt-in.
-
-## 2025-10-22 — Open-line subdivision fidelity
-
-- Open polylines now up-sample every path segment into 30 uniform sub-segments before recomputing normals and evaluating compass weights. Preserve this densification when tweaking the pipeline so directional oxidation applies along the full span of straight traces.
-- The open-line inner contour now stitches the per-sample candidates directly—avoid inserting additional smoothing for these paths or thickness variations will smear back into segment averages.
-
-## 2025-10-23 — Endpoint compass patches & open sampling tweaks
-
-- Open paths call the adaptive sampler with a minimal segment count (two samples per span) before applying the 30× subdivision pass so each inserted slice owns its compass evaluation instead of inheriting the earlier Bézier minimum of twelve.
-- Both endpoints of open polylines now spawn compass-driven oxide patches using the same helper as standalone dots. Keep these loops in `innerPolygons` so the canvas can paint endpoint puddles in sync with compass edits.
-- The shared `sampleCompassPatch` helper backs the single-node branch too; update it when adjusting compass resolution so dots and line endpoints stay visually identical.
-
-## 2025-10-24 — Uniform open-line sampling & pan tool translation
-
-- Open polylines now sample each original segment with uniform slices via `samplePathWithUniformSubdivisions` (currently 30 per span). Avoid reintroducing adaptive `minSamples` overrides or the hidden oxidation anchors will collapse on short spans.
-- The viewport stores a persistent `pan` offset and the Pan tool drags this translation using pointer capture. Always pass the stored `pan` vector into `computeViewTransform` so rendering, hit-tests, and distance conversions stay aligned.
-
-## 2025-10-25 — Segment-isolated envelopes & bootstrap guard
-
-- Circle-envelope occlusion is now limited to samples from the same path segment whenever the path stays open. Do not restore cross-segment unioning—the designer expects independent oxidation lobes per straight span.
-- Open paths subdivide every segment into **30** uniform slices before recomputing normals to stabilise per-point compass weights. Keep this density so edge weights stay faithful to the compass profile.
-- The demo scene bootstrap flips the `bootstrapped` flag before inserting default geometry, preventing StrictMode from spawning duplicate reference circles. Avoid reordering this guard or the initial scene may double-load.
-- Follow-up task: derive a tangential hull for open segments by sampling ~30 compass-driven oxidation anchors per span and tracing the furthest tangent envelope (see the latest QA screenshot). Document progress in this handbook once implemented.
-
-## 2025-10-26 — Open-line tangent envelope
-
-- Open polylines now reuse a shared compass-envelope context and evaluate tangents between every pair of neighbouring subdivision samples (30 per source segment) to pick the furthest inward oxidation anchor per slice. Keep this evaluation when tuning the pipeline so directional spokes bend the entire span, not just the endpoints.
-- Tangent comparisons stay local to a segment—continue to respect `segmentIndex` boundaries so adjacent spans do not merge their oxidation hulls implicitly.
-- The selected tangent anchors still pass through `enforceMinimumOffset`; do not bypass this clamp or the contour can recede past the requested compass thickness.
-
-## 2025-10-27 — Open-line arc maximisation
-
-- Open-path envelope sampling now scans every visible arc for the point that travels furthest along each slice’s inward normal. Preserve this search when tweaking the solver so compass spikes imprint across the full span instead of collapsing to the nearest angle.
-- Arc subdivision honours the resolution floor of `max(resolution * 0.5, 0.0005)`; keep this limit so narrow lobes from the compass profile remain in the dense loop.
-
-## 2025-10-28 — Segment-wide tangent sweeps
-- Open polylines now compare circle tangents between every pair of subdivision samples within the same segment when picking oxidation anchors. Retain this sweep—or replace it with an equally comprehensive check—so distant spikes along the dashed preview still extend to their furthest compass-driven travel.
-- Tangent refinement projects onto the compass hull via `radiusForAngle`. If you adjust how the compass polygon is sampled, keep this helper aligned or the tangent checks will fall back to stale radii.
-
-## 2025-10-29 — Ultra-dense open-line resolution
-- Open polylines subdivide each source segment into **300** uniform slices before recomputing normals so every hidden oxidation probe honours tiny compass spikes. Preserve this density (or justify an equivalent resolution) when tuning sampling.
-- Circle-envelope arc marching now uses a 10× finer spatial step (down to 0.0005 μm) and keeps dense-loop deduplication to 0.001 μm, ensuring dashed previews match highly detailed compass patterns without smoothing away protrusions.
-- Compass patches around dots and endpoints adopt the same tighter spacing floor (0.002 μm). If performance tweaks are necessary, profile before relaxing these tolerances and document any trade-offs.
-
-## 2025-10-30 — Radial profile anchors for oxidation
-- `computeCircleEnvelope` now samples a dense radial profile from every subdivision centre (including intermediate slices) and adds those spokes to the dense loop so compass spikes stop skipping the dashed contour.
-- Open polylines consume the returned profile anchors and promote any spoke that travels further along a slice’s inward normal before tangent refinement. Keep this in place so directional envelopes reflect every hidden oxidation probe.
+- `computeCircleEnvelope` now feeds every visible arc segment (post-occlusion) into the dense loop, preferring arcs that face inward on open spans. Keep this sweep intact so the dashed oxide contour reflects contributions from all headings without reintroducing the heavy radial spoke sampling.
+- Arc subdivision counts depend on the arc span and current resolution; avoid dropping below two samples per arc or narrow intersections between circles will disappear from the preview.

@@ -72,7 +72,7 @@ export class CanvasRenderer {
     this.ctx.clearRect(0, 0, width, height);
     const logicalWidth = width / this.dpr;
     const logicalHeight = height / this.dpr;
-    const view = computeViewTransform(logicalWidth, logicalHeight, state.zoom, state.pan);
+    const view = computeViewTransform(logicalWidth, logicalHeight, state.zoom);
     drawGrid(this.ctx, state.grid, view);
     drawMirrorAxes(this.ctx, state.mirror, view);
     const showHeatmap = state.measurements.showHeatmap;

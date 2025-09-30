@@ -25,7 +25,6 @@ import {
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
-  samplePathWithUniformSubdivisions,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
 import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
@@ -33,6 +32,7 @@ import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
 const MAX_THICKNESS_UM = 10;
+const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
@@ -181,6 +181,27 @@ const shiftNode = (node: PathNode, x: number, y: number): PathNode => {
   };
 };
 
+const mergeEndpointsIfClose = (
+  nodes: PathNode[],
+  alreadyClosed: boolean,
+): { nodes: PathNode[]; closed: boolean } => {
+  if (nodes.length < 2 || alreadyClosed) {
+    return { nodes, closed: alreadyClosed };
+  }
+  const first = nodes[0];
+  const lastIndex = nodes.length - 1;
+  const last = nodes[lastIndex];
+  if (distance(first.point, last.point) > ENDPOINT_MERGE_THRESHOLD) {
+    return { nodes, closed: false };
+  }
+  const mergedX = (first.point.x + last.point.x) / 2;
+  const mergedY = (first.point.y + last.point.y) / 2;
+  const mergedNodes = [...nodes];
+  mergedNodes[0] = shiftNode(first, mergedX, mergedY);
+  mergedNodes[lastIndex] = shiftNode(last, mergedX, mergedY);
+  return { nodes: mergedNodes, closed: true };
+};
+
 const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']): PathNode[] => {
   if (!mirror.enabled) return nodes;
   return nodes.map((node) => {
@@ -197,39 +218,6 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 
 const TAU = Math.PI * 2;
 const EPS = 1e-6;
-const OPEN_SEGMENT_SUBDIVISIONS = 300;
-
-const sampleCompassPatch = (
-  center: Vec2,
-  options: ThicknessOptions,
-  resolution: number,
-): Vec2[] => {
-  const segments = Math.max(160, options.weights.length * 16, 200);
-  const points: Vec2[] = [];
-  const minSpacing = Math.max(resolution * 0.5, 0.002);
-  let previous: Vec2 | null = null;
-  for (let i = 0; i < segments; i += 1) {
-    const theta = (i / segments) * TAU;
-    const radius = Math.max(evalThicknessForAngle(theta, options), 0);
-    if (radius <= EPS) continue;
-    const candidate: Vec2 = {
-      x: center.x + Math.cos(theta) * radius,
-      y: center.y + Math.sin(theta) * radius,
-    };
-    if (!previous || distance(previous, candidate) >= minSpacing) {
-      points.push(candidate);
-      previous = candidate;
-    }
-  }
-  if (points.length >= 3) {
-    const first = points[0];
-    const last = points.at(-1)!;
-    if (distance(first, last) < minSpacing) {
-      points.pop();
-    }
-  }
-  return points;
-};
 
 type Arc = { start: number; end: number };
 
@@ -239,32 +227,6 @@ interface Circle {
   normal: Vec2;
 }
 
-interface CircleEnvelopeContext {
-  circles: Circle[];
-  inwardAngles: number[];
-  radiusForAngle: (angle: number) => number;
-}
-
-const prepareCircleEnvelope = (
-  samples: SamplePoint[],
-  thicknessOptions: ThicknessOptions,
-): CircleEnvelopeContext => {
-  const inwardAngles: number[] = [];
-  const radiusForAngle = (angle: number): number =>
-    Math.max(evalThicknessForAngle(wrapAngle(angle), thicknessOptions), 0);
-  const circles = samples.map((sample) => {
-    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
-    inwardAngles.push(inwardAngle);
-    const baselineRadius = radiusForAngle(inwardAngle);
-    return {
-      center: sample.position,
-      radius: baselineRadius,
-      normal: sample.normal,
-    };
-  });
-  return { circles, inwardAngles, radiusForAngle };
-};
-
 const wrapAngle = (angle: number): number => {
   let wrapped = angle % TAU;
   if (wrapped < 0) {
@@ -272,6 +234,8 @@ const wrapAngle = (angle: number): number => {
   }
   return wrapped;
 };
+
+const arcLength = (arc: Arc): number => arc.end - arc.start;
 
 const pushArc = (arcs: Arc[], start: number, end: number): void => {
   if (end - start <= EPS) return;
@@ -331,6 +295,20 @@ const angularDistance = (a: number, b: number): number => {
 const angleInArc = (angle: number, arc: Arc): boolean =>
   angle >= arc.start - EPS && angle <= arc.end + EPS;
 
+const clampAngleToArc = (angle: number, arc: Arc): number => {
+  const length = arcLength(arc);
+  if (length <= EPS * 4) {
+    return wrapAngle(arc.start + length / 2);
+  }
+  if (angle <= arc.start) {
+    return arc.start + EPS;
+  }
+  if (angle >= arc.end) {
+    return arc.end - EPS;
+  }
+  return angle;
+};
+
 const toPointOnCircle = (circle: Circle, angle: number, radiusOverride?: number): Vec2 => {
   const radius = radiusOverride ?? circle.radius;
   return {
@@ -367,50 +345,6 @@ const computeOcclusionIntervals = (a: Circle, b: Circle): Arc[] => {
   return normaliseInterval(angleToB - phi, angleToB + phi);
 };
 
-const computeCircleTangents = (a: Circle, b: Circle): { a: Vec2; b: Vec2 }[] => {
-  const result: { a: Vec2; b: Vec2 }[] = [];
-  const dx = b.center.x - a.center.x;
-  const dy = b.center.y - a.center.y;
-  const d2 = dx * dx + dy * dy;
-  if (d2 <= EPS * EPS) {
-    return result;
-  }
-
-  const resolveTangents = (inner: boolean): void => {
-    const r1 = a.radius;
-    let r2 = b.radius;
-    if (inner) {
-      r2 = -r2;
-    }
-    const dr = r1 - r2;
-    const h2 = d2 - dr * dr;
-    if (h2 < -EPS) {
-      return;
-    }
-    const h = Math.sqrt(Math.max(0, h2));
-    for (const sign of [-1, 1]) {
-      const vx = (dx * dr - dy * h * sign) / d2;
-      const vy = (dy * dr + dx * h * sign) / d2;
-      result.push({
-        a: {
-          x: a.center.x + vx * r1,
-          y: a.center.y + vy * r1,
-        },
-        b: {
-          x: b.center.x + vx * r2,
-          y: b.center.y + vy * r2,
-        },
-      });
-    }
-  };
-
-  resolveTangents(false);
-  return result;
-};
-
-const inwardDistanceAlongNormal = (sample: SamplePoint, point: Vec2): number =>
-  -dot(sub(point, sample.position), sample.normal);
-
 const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
   (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 
@@ -445,7 +379,6 @@ interface EnvelopeOptions {
   orientationSign: number;
   resolution: number;
   restrictToInward: boolean;
-  allowCrossSegmentOcclusion: boolean;
 }
 
 const computeCircleEnvelope = (
@@ -453,18 +386,31 @@ const computeCircleEnvelope = (
   fallbackInner: Vec2[],
   options: EnvelopeOptions,
   thicknessOptions: ThicknessOptions,
-  context?: CircleEnvelopeContext,
-): { candidates: Vec2[]; denseLoop: Vec2[]; profiles: Vec2[][] } => {
-  const { circles, inwardAngles, radiusForAngle } =
-    context ?? prepareCircleEnvelope(samples, thicknessOptions);
+): { candidates: Vec2[]; denseLoop: Vec2[] } => {
+  const inwardAngles: number[] = [];
+
+  const radiusForAngle = (angle: number): number => {
+    const outwardAngle = wrapAngle(angle + Math.PI);
+    return Math.max(evalThicknessForAngle(outwardAngle, thicknessOptions), 0);
+  };
+
+  const circles: Circle[] = samples.map((sample) => {
+    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
+    inwardAngles.push(inwardAngle);
+    const baselineRadius = radiusForAngle(inwardAngle);
+    return {
+      center: sample.position,
+      radius: baselineRadius,
+      normal: sample.normal,
+    };
+  });
 
   const denseLoop: Vec2[] = [];
-  const profiles: Vec2[][] = samples.map(() => []);
 
   const appendToDenseLoop = (points: Vec2[]): void => {
     for (const point of points) {
       const last = denseLoop.at(-1);
-      if (!last || distance(last, point) > Math.max(options.resolution * 0.25, 0.001)) {
+      if (!last || distance(last, point) > Math.max(options.resolution * 0.25, 0.01)) {
         denseLoop.push(point);
       }
     }
@@ -485,17 +431,6 @@ const computeCircleEnvelope = (
       if (j === index) continue;
       const other = circles[j];
       if (other.radius <= EPS) continue;
-      if (!options.allowCrossSegmentOcclusion) {
-        const segment = sample.segmentIndex;
-        const otherSegment = samples[j]?.segmentIndex;
-        if (
-          segment !== undefined &&
-          otherSegment !== undefined &&
-          otherSegment !== segment
-        ) {
-          continue;
-        }
-      }
       const occluded = computeOcclusionIntervals(circle, other);
       if (occluded.length) {
         arcs = subtractIntervals(arcs, occluded);
@@ -515,42 +450,6 @@ const computeCircleEnvelope = (
     const inwardArc = arcs.find((arc) => angleInArc(inwardAngle, arc));
     const allowAllAngles = !options.restrictToInward;
 
-    const profilePoints = profiles[index];
-    const arcsForProfile = arcs.length ? arcs : [{ start: 0, end: TAU }];
-    const profileSegments = Math.max(96, thicknessOptions.weights.length * 24, 120);
-    const profileSpacing = Math.max(options.resolution * 0.25, 0.0005);
-    let previousProfilePoint: Vec2 | null = null;
-    for (let step = 0; step < profileSegments; step += 1) {
-      const angle = wrapAngle((step / profileSegments) * TAU);
-      if (
-        arcsForProfile.length &&
-        !arcsForProfile.some((arc) => angleInArc(angle, arc))
-      ) {
-        continue;
-      }
-      const radius = radiusForAngle(angle);
-      if (radius <= EPS) {
-        continue;
-      }
-      const point = toPointOnCircle(circle, angle, radius);
-      if (!allowAllAngles) {
-        const direction = sub(point, sample.position);
-        if (dot(direction, sample.normal) >= -EPS) {
-          continue;
-        }
-      }
-      if (
-        !previousProfilePoint ||
-        distance(previousProfilePoint, point) > profileSpacing
-      ) {
-        profilePoints.push(point);
-        previousProfilePoint = point;
-      }
-    }
-    if (profilePoints.length) {
-      appendToDenseLoop(profilePoints);
-    }
-
     const arcCandidates = arcs.filter((arc) => {
       const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
       const radius = radiusForAngle(mid);
@@ -560,6 +459,38 @@ const computeCircleEnvelope = (
       const direction = sub(midPoint, sample.position);
       return dot(direction, sample.normal) < -EPS;
     });
+
+    const arcsForDenseLoop = (() => {
+      if (allowAllAngles) {
+        return arcs;
+      }
+      if (arcCandidates.length) {
+        return arcCandidates;
+      }
+      return arcs;
+    })();
+
+    for (const arc of arcsForDenseLoop) {
+      const span = arc.end - arc.start;
+      if (span <= EPS) {
+        continue;
+      }
+      const approxLength = Math.max(baselineRadius, options.resolution) * span;
+      const subdivisions = Math.max(2, Math.ceil(approxLength / Math.max(options.resolution, 0.02)));
+      const arcPoints: Vec2[] = [];
+      for (let step = 0; step < subdivisions; step += 1) {
+        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
+        const angle =
+          options.orientationSign >= 0
+            ? arc.start + span * t
+            : arc.end - span * t;
+        const radius = radiusForAngle(angle);
+        if (radius > EPS) {
+          arcPoints.push(toPointOnCircle(circle, angle, radius));
+        }
+      }
+      appendToDenseLoop(arcPoints);
+    }
 
     const availableArcs = arcCandidates.length ? arcCandidates : arcs;
 
@@ -586,99 +517,43 @@ const computeCircleEnvelope = (
       selectedArc = bestArc;
     }
 
-    const seenArcs = new Set<string>();
-    const arcKey = (arc: Arc): string => `${arc.start.toFixed(6)}:${arc.end.toFixed(6)}`;
-    const markSeen = (arc: Arc): void => {
-      seenArcs.add(arcKey(arc));
-    };
-    const isSeen = (arc: Arc): boolean => seenArcs.has(arcKey(arc));
-
-    const queue: Arc[] = [];
+    let chosenAngle: number | null = null;
     if (selectedArc) {
-      queue.push(selectedArc);
-    }
-    for (const arc of availableArcs) {
-      if (selectedArc && Math.abs(arc.start - selectedArc.start) <= 1e-6 && Math.abs(arc.end - selectedArc.end) <= 1e-6) {
-        continue;
-      }
-      queue.push(arc);
-    }
-    if (!queue.length) {
-      queue.push(...arcs);
+      chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
     }
 
-    let bestCandidate: { angle: number; point: Vec2; distance: number } | null = null;
-
-    const evaluateArc = (arc: Arc): void => {
-      if (isSeen(arc)) return;
-      markSeen(arc);
-      const span = arc.end - arc.start;
-      if (span <= EPS) {
-        return;
-      }
-      const stepBase = Math.max(options.resolution * 0.5, 0.0005);
-      const radiusStart = radiusForAngle(arc.start);
-      const radiusEnd = radiusForAngle(arc.end);
-      const approxRadius = Math.max(baselineRadius, radiusStart, radiusEnd);
-      const approxLength = Math.max(approxRadius * span, stepBase);
-      const subdivisions = Math.max(24, Math.ceil(approxLength / stepBase));
-      const arcPoints: Vec2[] = [];
-      for (let step = 0; step <= subdivisions; step += 1) {
-        const t = subdivisions <= 0 ? 0 : step / subdivisions;
-        const rawAngle =
-          options.orientationSign >= 0
-            ? arc.start + span * t
-            : arc.end - span * t;
-        const angle = wrapAngle(rawAngle);
-        const radius = radiusForAngle(angle);
-        if (radius <= EPS) {
-          continue;
-        }
-        const point = toPointOnCircle(circle, angle, radius);
-        arcPoints.push(point);
-        const travel = inwardDistanceAlongNormal(sample, point);
-        if (!Number.isFinite(travel) || travel <= 0) {
-          continue;
-        }
-        if (!bestCandidate || travel > bestCandidate.distance + 1e-5) {
-          bestCandidate = { angle, point, distance: travel };
-        }
-      }
-      if (arcPoints.length) {
-        appendToDenseLoop(arcPoints);
-      }
-    };
-
-    for (const arc of queue) {
-      evaluateArc(arc);
-    }
-
-    if (!bestCandidate) {
-      for (const arc of arcs) {
-        evaluateArc(arc);
-      }
-    }
-
-    if (!bestCandidate) {
+    if (chosenAngle === null) {
       appendToDenseLoop([fallback]);
       return fallback;
     }
 
-    appendToDenseLoop([bestCandidate.point]);
-    return bestCandidate.point;
+    const candidateRadius = radiusForAngle(chosenAngle);
+    if (candidateRadius <= EPS) {
+      appendToDenseLoop([fallback]);
+      return fallback;
+    }
+    const candidate = toPointOnCircle(circle, chosenAngle, candidateRadius);
+    appendToDenseLoop([candidate]);
+    const direction = sub(candidate, sample.position);
+    if (!allowAllAngles && dot(direction, sample.normal) >= -EPS) {
+      appendToDenseLoop([fallback]);
+      return fallback;
+    }
+
+    return candidate;
   });
 
   const dense = (() => {
     if (denseLoop.length < 3) return denseLoop;
     const first = denseLoop[0];
     const last = denseLoop.at(-1)!;
-    if (distance(first, last) <= Math.max(options.resolution * 0.5, 0.002)) {
+    if (distance(first, last) <= Math.max(options.resolution * 0.5, 0.02)) {
       return denseLoop.slice(0, -1);
     }
     return denseLoop;
   })();
 
-  return { candidates, denseLoop: dense, profiles };
+  return { candidates, denseLoop: dense };
 };
 
 const deriveInnerGeometry = (
@@ -692,7 +567,7 @@ const deriveInnerGeometry = (
   }));
 
   const defaultResolution = Math.min(0.35, thicknessOptions.uniformThickness / 6);
-  const resolution = Math.max(0.0035, thicknessOptions.resolution ?? defaultResolution);
+  const resolution = Math.max(0.035, thicknessOptions.resolution ?? defaultResolution);
 
   const enforceMinimumOffset = (loop: Vec2[]): Vec2[] => {
     if (loop.length !== samples.length) {
@@ -728,110 +603,37 @@ const deriveInnerGeometry = (
   if (!closed || samples.length < 3) {
     if (samples.length === 1) {
       const center = samples[0].position;
-      const loop = sampleCompassPatch(center, thicknessOptions, resolution);
+      const segments = Math.max(160, thicknessOptions.weights.length * 16, 200);
+      const loop: Vec2[] = [];
+      for (let i = 0; i < segments; i += 1) {
+        const theta = (i / segments) * TAU;
+        const radius = Math.max(evalThicknessForAngle(theta, thicknessOptions), 0);
+        loop.push({
+          x: center.x + Math.cos(theta) * radius,
+          y: center.y + Math.sin(theta) * radius,
+        });
+      }
       return { innerSamples: [{ ...center }], polygons: loop.length >= 3 ? [loop] : [] };
     }
     if (!samples.length) {
       return { innerSamples: [], polygons: [] };
     }
 
-    const context = prepareCircleEnvelope(samples, thicknessOptions);
-    const { candidates, profiles } = computeCircleEnvelope(
+    const { candidates, denseLoop } = computeCircleEnvelope(
       samples,
       fallbackInner,
       {
         orientationSign: 1,
         resolution,
         restrictToInward: false,
-        allowCrossSegmentOcclusion: false,
       },
       thicknessOptions,
-      context,
     );
 
-    const bestPoints = candidates.map((candidate, index) => {
-      const base = candidate ?? fallbackInner[index];
-      return { x: base.x, y: base.y };
-    });
-    const bestDistances = bestPoints.map((point, index) => {
-      const distance = inwardDistanceAlongNormal(samples[index], point);
-      if (!Number.isFinite(distance) || distance <= 0) {
-        return 0;
-      }
-      return distance;
-    });
-
-    const tryUpdate = (index: number, point: Vec2): void => {
-      const inward = inwardDistanceAlongNormal(samples[index], point);
-      if (!Number.isFinite(inward) || inward <= 0) {
-        return;
-      }
-      if (inward > bestDistances[index] + 1e-5) {
-        bestDistances[index] = inward;
-        bestPoints[index] = { x: point.x, y: point.y };
-      }
-    };
-
-    if (profiles.length === samples.length) {
-      profiles.forEach((anchors, index) => {
-        for (const point of anchors) {
-          tryUpdate(index, point);
-        }
-      });
-    }
-
-    const projectTangent = (
-      index: number,
-      circle: Circle,
-      sample: SamplePoint,
-      tangentPoint: Vec2,
-    ): void => {
-      const angle = Math.atan2(tangentPoint.y - circle.center.y, tangentPoint.x - circle.center.x);
-      const radius = context.radiusForAngle(angle);
-      if (radius <= EPS) {
-        return;
-      }
-      const refined = toPointOnCircle(circle, angle, radius);
-      if (dot(sub(refined, sample.position), sample.normal) < -EPS) {
-        tryUpdate(index, refined);
-      }
-    };
-
-    let start = 0;
-    while (start < samples.length) {
-      const segmentIndex = samples[start].segmentIndex;
-      if (segmentIndex === undefined) {
-        start += 1;
-        continue;
-      }
-      let end = start + 1;
-      while (end < samples.length && samples[end].segmentIndex === segmentIndex) {
-        end += 1;
-      }
-
-      for (let i = start; i < end; i += 1) {
-        for (let j = i + 1; j < end; j += 1) {
-          const circleA = context.circles[i];
-          const circleB = context.circles[j];
-          if (!circleA || !circleB) {
-            continue;
-          }
-          const tangents = computeCircleTangents(circleA, circleB);
-          for (const tangent of tangents) {
-            projectTangent(i, circleA, samples[i], tangent.a);
-            projectTangent(j, circleB, samples[j], tangent.b);
-          }
-        }
-      }
-
-      start = end;
-    }
-
-    const enforced = enforceMinimumOffset(bestPoints);
-    const endpointPolygons = [samples[0], samples.at(-1)!]
-      .map((sample) => sampleCompassPatch(sample.position, thicknessOptions, resolution))
-      .filter((loop) => loop.length >= 3);
-    return { innerSamples: enforced, polygons: endpointPolygons };
+    const smoothingIterations = Math.min(3, Math.max(1, Math.round(samples.length / 12)));
+    const smoothed = laplacianSmooth(candidates, 0.38, smoothingIterations, { closed: false });
+    const enforced = enforceMinimumOffset(smoothed);
+    return { innerSamples: enforced, polygons: denseLoop.length >= 3 ? [denseLoop] : [] };
   }
 
   const outerLoop = samples.map((sample) => sample.position);
@@ -845,7 +647,6 @@ const deriveInnerGeometry = (
       orientationSign,
       resolution,
       restrictToInward: true,
-      allowCrossSegmentOcclusion: true,
     },
     thicknessOptions,
   );
@@ -938,7 +739,6 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   nodeSelection: null,
   activeTool: 'line',
   zoom: 1,
-  pan: { x: 0, y: 0 },
   grid: {
     visible: true,
     snapToGrid: false,
@@ -999,7 +799,6 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
     : null,
   oxidationProgress: state.oxidationProgress,
   zoom: state.zoom,
-  pan: { ...state.pan },
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
@@ -1021,8 +820,6 @@ type WorkspaceActions = {
   setOxidationProgress: (value: number) => void;
   setZoom: (zoom: number) => void;
   zoomBy: (delta: number) => void;
-  setPan: (pan: Vec2) => void;
-  panBy: (delta: Vec2) => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
   setHoverProbe: (probe: MeasurementProbe | null) => void;
   setPinnedProbe: (probe: MeasurementProbe | null) => void;
@@ -1048,11 +845,9 @@ type WorkspaceActions = {
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
 
 const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => {
-  let sampled = path.meta.closed
-    ? adaptiveSamplePath(path, {
-        spacing: path.oxidation.evaluationSpacing,
-      })
-    : samplePathWithUniformSubdivisions(path, OPEN_SEGMENT_SUBDIVISIONS);
+  let sampled = adaptiveSamplePath(path, {
+    spacing: path.oxidation.evaluationSpacing,
+  });
   if (path.nodes.length === 1) {
     const node = path.nodes[0];
     sampled = {
@@ -1064,7 +859,6 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
           thickness: 0,
           curvature: 0,
           parameter: 0,
-          segmentIndex: 0,
         },
       ],
       length: 0,
@@ -1133,16 +927,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ...state,
       zoom: clampZoom(state.zoom * delta),
     })),
-  setPan: (pan) =>
-    set((state) => ({
-      ...state,
-      pan: { x: pan.x, y: pan.y },
-    })),
-  panBy: (delta) =>
-    set((state) => ({
-      ...state,
-      pan: { x: state.pan.x + delta.x, y: state.pan.y + delta.y },
-    })),
   addPath: (nodes, overrides) => {
     const mirror = get().mirror;
     const id = overrides?.meta?.id ?? createId('path');
@@ -1159,8 +943,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         updatedAt: Date.now(),
       };
       const clonedNodes = nodes.map((node) => ({ ...node }));
-      const snapped = applyMirrorSnapping(clonedNodes, mirror);
-      const finalMeta = { ...meta };
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(
+        clonedNodes,
+        meta.closed,
+      );
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
+      const finalMeta = { ...meta, closed: meta.closed || closed };
       const newPath: PathEntity = runGeometryPipeline(
         {
           meta: finalMeta,
@@ -1193,14 +981,15 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const history = [...state.history, captureSnapshot(state)].slice(-50);
       const target = state.paths[index];
       const nodes = updater(target.nodes.map((node) => ({ ...node })));
-      const snapped = applyMirrorSnapping(nodes, mirror);
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, target.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
       const updated = runGeometryPipeline(
         {
           ...target,
           nodes: snapped,
           meta: {
             ...target.meta,
-            closed: target.meta.closed,
+            closed: target.meta.closed || closed,
             updatedAt: Date.now(),
           },
         },
@@ -1262,8 +1051,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         return state;
       }
       const history = [...state.history, captureSnapshot(state)].slice(-50);
-      const snapped = applyMirrorSnapping(remainingNodes, state.mirror);
-      const finalClosed = path.meta.closed && snapped.length >= 3;
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(remainingNodes, path.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, state.mirror);
+      const finalClosed = snapped.length >= 3 && closed;
       const updated = runGeometryPipeline(
         {
           ...path,
@@ -1339,12 +1129,13 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           applyHandles(nodeIndex, nextIndex);
         }
       }
-      const snapped = applyMirrorSnapping(nodes, mirror);
+      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, path.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
       const updated = runGeometryPipeline(
         {
           ...path,
           nodes: snapped,
-          meta: { ...path.meta, updatedAt: Date.now() },
+          meta: { ...path.meta, closed: path.meta.closed || closed, updatedAt: Date.now() },
         },
         state.oxidationProgress,
       );
@@ -1528,7 +1319,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         dirty: true,
         oxidationProgress: previous.oxidationProgress,
         zoom: previous.zoom,
-        pan: { ...previous.pan },
       };
     });
   },
@@ -1552,7 +1342,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         dirty: true,
         oxidationProgress: snapshot.oxidationProgress,
         zoom: snapshot.zoom,
-        pan: { ...snapshot.pan },
       };
     });
   },
@@ -1569,7 +1358,6 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       future: [],
       dirty: false,
       zoom: clampZoom(payload.zoom ?? 1),
-      pan: payload.pan ? { ...payload.pan } : { x: 0, y: 0 },
     })),
   reset: () =>
     set((state) => ({
@@ -1618,7 +1406,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           },
         };
       }
-      const snapped = applyMirrorSnapping(nodes, mirror);
+      const { nodes: mergedNodes } = mergeEndpointsIfClose(nodes, path.meta.closed);
+      const snapped = applyMirrorSnapping(mergedNodes, mirror);
       const updated = runGeometryPipeline(
         {
           ...path,

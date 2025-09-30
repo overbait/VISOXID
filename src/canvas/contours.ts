@@ -94,7 +94,7 @@ export const drawContours = (
   };
 
   const innerPolygons = path.sampled?.innerPolygons ?? [];
-  if (showOxide && innerPolygons.length && !path.meta.closed) {
+  if (showOxide && innerPolygons.length && outerWorld.length <= 2) {
     ctx.save();
     const alpha = selected ? 0.55 : 0.35;
     const fill = `rgba(37, 99, 235, ${alpha})`;
