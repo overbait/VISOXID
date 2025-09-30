@@ -462,15 +462,12 @@ const computeCircleEnvelope = (
       return dot(direction, sample.normal) < -EPS;
     });
 
-    const arcsForDenseLoop = (() => {
-      if (allowAllAngles) {
-        return arcs;
-      }
-      if (arcCandidates.length) {
-        return arcCandidates;
-      }
-      return arcs;
-    })();
+    const arcsForDenseLoop = allowAllAngles ? arcs : arcCandidates;
+
+    if (!allowAllAngles && !arcCandidates.length) {
+      appendToDenseLoop([fallback]);
+      return fallback;
+    }
 
     for (const arc of arcsForDenseLoop) {
       const span = arc.end - arc.start;
@@ -494,7 +491,7 @@ const computeCircleEnvelope = (
       appendToDenseLoop(arcPoints);
     }
 
-    const availableArcs = arcCandidates.length ? arcCandidates : arcs;
+    const availableArcs = allowAllAngles ? arcs : arcCandidates;
 
     let selectedArc: Arc | null = null;
     if (inwardArc) {
