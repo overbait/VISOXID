@@ -25,6 +25,7 @@ import {
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
+  resampleOpenPolyline,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
 import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
@@ -614,8 +615,18 @@ const deriveInnerGeometry = (
       thicknessOptions,
     );
 
+    let seededLoop = candidates;
+
+    if (denseLoop.length >= 2 && samples.length >= 2) {
+      const resampled = resampleOpenPolyline(denseLoop, samples.length);
+      if (resampled.length === samples.length) {
+        const realigned = alignLoop(resampled, fallbackInner);
+        seededLoop = enforceMinimumOffset(realigned);
+      }
+    }
+
     const smoothingIterations = Math.min(3, Math.max(1, Math.round(samples.length / 12)));
-    const smoothed = laplacianSmooth(candidates, 0.38, smoothingIterations, { closed: false });
+    const smoothed = laplacianSmooth(seededLoop, 0.38, smoothingIterations, { closed: false });
     const enforced = enforceMinimumOffset(smoothed);
     return { innerSamples: enforced, polygons: denseLoop.length >= 3 ? [denseLoop] : [] };
   }

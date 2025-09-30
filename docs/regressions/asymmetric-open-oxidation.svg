@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="320" viewBox="0 0 512 320">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10121d" />
+      <stop offset="1" stop-color="#05070b" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="320" fill="url(#bg)" />
+  <g fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <polyline stroke="#52b6ff" points="64 240 176 96 288 152 432 88" />
+    <polyline stroke="#ff9f4d" points="102 212 184 140 270 168 384 136" />
+  </g>
+  <g font-family="'Inter', 'Segoe UI', sans-serif" font-size="20" fill="#d7e3ff">
+    <text x="64" y="276">Outer polyline</text>
+    <text x="272" y="216" fill="#ffd7aa">Aligned asymmetric oxide</text>
+  </g>
+</svg>

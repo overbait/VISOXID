@@ -142,3 +142,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `computeCircleEnvelope` now evaluates arc radii directly from the compass polygon per heading instead of clamping to the sample’s own offset. Leave the min-distance enforcement in `deriveInnerGeometry` to guarantee the requested thickness instead of reintroducing local `Math.max` guards.
 - Dense arc sampling pushes every chosen candidate point into the `denseLoop` and bumps the minimum subdivisions to 12 so closed loops keep enough geometry to avoid collapsing when forms are sealed.
+
+## 2025-10-21 — Open-loop dense alignment & regression snapshot
+
+- `deriveInnerGeometry` now resamples open-path `denseLoop` results back to the sampled resolution before aligning with `alignLoop`. After alignment, immediately call `enforceMinimumOffset` so tangential drift still respects the configured oxide floor.
+- A helper `resampleOpenPolyline` lives beside `resampleClosedPolygon`. Reuse it when you need evenly spaced open-line samples.
+- Added `docs/regressions/asymmetric-open-oxidation.svg` as a quick visual check for asymmetric envelopes on open paths. Keep it updated whenever the open-loop offset behaviour changes.
