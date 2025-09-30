@@ -36,9 +36,19 @@ const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
+const MAX_DOT_COUNT = 1000;
+const DEFAULT_DOT_COUNT = 240;
 
 const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
 const clampZoom = (value: number): number => clamp(value, MIN_ZOOM, MAX_ZOOM);
+
+const clampDotCount = (value: number | undefined): number => {
+  if (!Number.isFinite(value ?? DEFAULT_DOT_COUNT)) {
+    return DEFAULT_DOT_COUNT;
+  }
+  const rounded = Math.round(value ?? DEFAULT_DOT_COUNT);
+  return clamp(rounded, 0, MAX_DOT_COUNT);
+};
 
 const clampAngleDeg = (angleDeg: number): number => {
   let wrapped = angleDeg % 360;
@@ -390,8 +400,10 @@ const computeCircleEnvelope = (
   const inwardAngles: number[] = [];
 
   const radiusForAngle = (angle: number): number => {
-    const outwardAngle = wrapAngle(angle + Math.PI);
-    return Math.max(evalThicknessForAngle(outwardAngle, thicknessOptions), 0);
+    const queryAngle = options.restrictToInward
+      ? wrapAngle(angle + Math.PI)
+      : wrapAngle(angle);
+    return Math.max(evalThicknessForAngle(queryAngle, thicknessOptions), 0);
   };
 
   const circles: Circle[] = samples.map((sample) => {
@@ -460,7 +472,43 @@ const computeCircleEnvelope = (
       return dot(direction, sample.normal) < -EPS;
     });
 
-    const availableArcs = arcCandidates.length ? arcCandidates : arcs;
+    const arcsForDenseLoop = allowAllAngles ? arcs : arcCandidates;
+
+    if (!allowAllAngles && !arcCandidates.length) {
+      appendToDenseLoop([fallback]);
+      return fallback;
+    }
+
+    let bestOpenAngle: number | null = null;
+    let bestOpenRadius = -Infinity;
+
+    for (const arc of arcsForDenseLoop) {
+      const span = arc.end - arc.start;
+      if (span <= EPS) {
+        continue;
+      }
+      const approxLength = Math.max(baselineRadius, options.resolution) * span;
+      const subdivisions = Math.max(2, Math.ceil(approxLength / Math.max(options.resolution, 0.02)));
+      const arcPoints: Vec2[] = [];
+      for (let step = 0; step < subdivisions; step += 1) {
+        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
+        const angle =
+          options.orientationSign >= 0
+            ? arc.start + span * t
+            : arc.end - span * t;
+        const radius = radiusForAngle(angle);
+        if (radius > EPS) {
+          arcPoints.push(toPointOnCircle(circle, angle, radius));
+          if (allowAllAngles && radius > bestOpenRadius) {
+            bestOpenRadius = radius;
+            bestOpenAngle = angle;
+          }
+        }
+      }
+      appendToDenseLoop(arcPoints);
+    }
+
+    const availableArcs = allowAllAngles ? arcs : arcCandidates;
 
     let selectedArc: Arc | null = null;
     if (inwardArc) {
@@ -486,24 +534,10 @@ const computeCircleEnvelope = (
     }
 
     let chosenAngle: number | null = null;
-    if (selectedArc) {
+    if (allowAllAngles && bestOpenAngle !== null && bestOpenRadius > EPS) {
+      chosenAngle = bestOpenAngle;
+    } else if (selectedArc) {
       chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
-      const span = selectedArc.end - selectedArc.start;
-      const approxLength = baselineRadius * span;
-      const subdivisions = Math.max(12, Math.ceil(approxLength / Math.max(options.resolution, 0.01)));
-      const arcPoints: Vec2[] = [];
-      for (let step = 0; step < subdivisions; step += 1) {
-        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
-        const angle =
-          options.orientationSign >= 0
-            ? selectedArc.start + span * t
-            : selectedArc.end - span * t;
-        const radius = radiusForAngle(angle);
-        if (radius > EPS) {
-          arcPoints.push(toPointOnCircle(circle, angle, radius));
-        }
-      }
-      appendToDenseLoop(arcPoints);
     }
 
     if (chosenAngle === null) {
@@ -749,6 +783,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   dirty: false,
   oxidationVisible: true,
   oxidationProgress: 1,
+  oxidationDotCount: DEFAULT_DOT_COUNT,
   directionalLinking: true,
   bootstrapped: false,
   library,
@@ -782,6 +817,7 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
     ? { pathId: state.nodeSelection.pathId, nodeIds: [...state.nodeSelection.nodeIds] }
     : null,
   oxidationProgress: state.oxidationProgress,
+  oxidationDotCount: state.oxidationDotCount,
   zoom: state.zoom,
 });
 
@@ -813,6 +849,7 @@ type WorkspaceActions = {
   pushWarning: (message: string, level?: 'info' | 'warning' | 'error') => void;
   dismissWarning: (id: string) => void;
   toggleOxidationVisible: (value: boolean) => void;
+  setOxidationDotCount: (value: number) => void;
   markBootstrapped: () => void;
   saveShapeToLibrary: (pathId: string, name: string) => void;
   removeShapeFromLibrary: (shapeId: string) => void;
@@ -1215,6 +1252,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     warnings: state.warnings.filter((warning) => warning.id !== id),
   })),
   toggleOxidationVisible: (value) => set({ oxidationVisible: value }),
+  setOxidationDotCount: (value) => set({ oxidationDotCount: clampDotCount(value) }),
   markBootstrapped: () => set({ bootstrapped: true }),
   saveShapeToLibrary: (pathId, name) =>
     set((state) => {
@@ -1282,6 +1320,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       future: [],
       dirty: true,
       bootstrapped: true,
+      oxidationDotCount: DEFAULT_DOT_COUNT,
     })),
   undo: () => {
     const { history } = get();
@@ -1302,6 +1341,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         future: [...state.future, futureSnapshot].slice(-50),
         dirty: true,
         oxidationProgress: previous.oxidationProgress,
+        oxidationDotCount: previous.oxidationDotCount,
         zoom: previous.zoom,
       };
     });
@@ -1325,6 +1365,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         future: remaining,
         dirty: true,
         oxidationProgress: snapshot.oxidationProgress,
+        oxidationDotCount: snapshot.oxidationDotCount,
         zoom: snapshot.zoom,
       };
     });
@@ -1335,6 +1376,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ...payload,
       oxidationVisible: payload.oxidationVisible ?? true,
       oxidationProgress: payload.oxidationProgress ?? 1,
+      oxidationDotCount: clampDotCount(payload.oxidationDotCount ?? DEFAULT_DOT_COUNT),
       directionalLinking: payload.directionalLinking ?? true,
       bootstrapped: payload.bootstrapped ?? true,
       library: state.library.map(cloneStoredShape),

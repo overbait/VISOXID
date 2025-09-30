@@ -142,3 +142,23 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `computeCircleEnvelope` now evaluates arc radii directly from the compass polygon per heading instead of clamping to the sample’s own offset. Leave the min-distance enforcement in `deriveInnerGeometry` to guarantee the requested thickness instead of reintroducing local `Math.max` guards.
 - Dense arc sampling pushes every chosen candidate point into the `denseLoop` and bumps the minimum subdivisions to 12 so closed loops keep enough geometry to avoid collapsing when forms are sealed.
+
+## 2025-10-31 — Circle envelope arc coverage
+
+- `computeCircleEnvelope` now feeds every visible arc segment (post-occlusion) into the dense loop, preferring arcs that face inward on open spans. Keep this sweep intact so the dashed oxide contour reflects contributions from all headings without reintroducing the heavy radial spoke sampling.
+- Closed-loop envelopes reject any arc segments that fail the inward-facing check instead of falling back to outward spans. If no inward arc survives the occlusion sweep, the solver reverts to the sample’s baseline normal projection so compass biases stay aligned with the same global heading everywhere on the contour.
+- Arc subdivision counts depend on the arc span and current resolution; avoid dropping below two samples per arc or narrow intersections between circles will disappear from the preview.
+
+## 2025-11-01 — Global compass orientation for open paths
+
+- Circle envelopes now evaluate compass radii in world space for open paths instead of mirroring across the inward normal. When tuning the solver, keep `options.restrictToInward` as the switch between inward-only (closed loops) and global headings (open traces) so compass edits stay aligned with the same absolute orientation everywhere.
+
+## 2025-11-02 — Open-path envelope maximises global headings
+
+- Open-path circle envelopes now pick the visible heading with the greatest compass radius instead of clamping to the sample’s inward normal. Preserve this maximisation so straight segments continue to follow the global orientation regardless of their tangent direction.
+
+## 2025-11-03 — Compass dot preview overlay
+
+- The canvas no longer renders the oxide ribbon or dashed inner contour; `drawContours` now only strokes the outer path with a solid line. Keep it this way so the preview stays focused on per-point dots.
+- Line oxidation is visualised through `drawOxidationDots`, which drops translated compass patches along each sampled slice. Respect `oxidationDotCount` and the `oxidationVisible` flag when adjusting this overlay.
+- The Oxidation panel exposes a “Line preview dots” slider (0–1000). When touching the store, continue to clamp values via `clampDotCount` so undo/redo snapshots remain consistent.

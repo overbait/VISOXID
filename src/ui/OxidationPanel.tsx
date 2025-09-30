@@ -8,6 +8,8 @@ export const OxidationPanel = () => {
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
   const oxidationVisible = useWorkspaceStore((state) => state.oxidationVisible);
   const toggleVisible = useWorkspaceStore((state) => state.toggleOxidationVisible);
+  const dotCount = useWorkspaceStore((state) => state.oxidationDotCount);
+  const setDotCount = useWorkspaceStore((state) => state.setOxidationDotCount);
   const active = defaults;
 
   const directionValues = useMemo(
@@ -34,7 +36,7 @@ export const OxidationPanel = () => {
     <div className="panel flex flex-col gap-4 p-4">
       <div className="section-title">Oxidation</div>
       <label className="flex items-center justify-between text-xs font-medium text-muted">
-        <span>Show oxide preview</span>
+        <span>Show compass dots</span>
         <input
           type="checkbox"
           className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
@@ -61,6 +63,17 @@ export const OxidationPanel = () => {
             const clamped = Math.min(10, Math.max(0, value));
             updateDefaults({ thicknessUniformUm: clamped });
           }}
+        />
+        <LabeledSlider
+          label="Line preview dots"
+          min={0}
+          max={1000}
+          step={1}
+          value={dotCount}
+          onChange={(value) => {
+            setDotCount(value);
+          }}
+          format={(value) => Math.round(value).toString()}
         />
       </div>
       <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs text-muted">
@@ -89,13 +102,14 @@ interface LabeledSliderProps {
   max: number;
   step: number;
   onChange: (value: number) => void;
+  format?: (value: number) => string;
 }
 
-const LabeledSlider = ({ label, value, min, max, step, onChange }: LabeledSliderProps) => (
+const LabeledSlider = ({ label, value, min, max, step, onChange, format }: LabeledSliderProps) => (
   <label className="flex flex-col gap-1 text-xs text-muted">
     <span className="flex items-center justify-between">
       <span>{label}</span>
-      <span className="font-semibold text-text">{formatValue(value)}</span>
+      <span className="font-semibold text-text">{format ? format(value) : formatValue(value)}</span>
     </span>
     <input
       type="range"
