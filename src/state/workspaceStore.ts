@@ -36,9 +36,19 @@ const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
+const MAX_DOT_COUNT = 1000;
+const DEFAULT_DOT_COUNT = 240;
 
 const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
 const clampZoom = (value: number): number => clamp(value, MIN_ZOOM, MAX_ZOOM);
+
+const clampDotCount = (value: number | undefined): number => {
+  if (!Number.isFinite(value ?? DEFAULT_DOT_COUNT)) {
+    return DEFAULT_DOT_COUNT;
+  }
+  const rounded = Math.round(value ?? DEFAULT_DOT_COUNT);
+  return clamp(rounded, 0, MAX_DOT_COUNT);
+};
 
 const clampAngleDeg = (angleDeg: number): number => {
   let wrapped = angleDeg % 360;
@@ -773,6 +783,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   dirty: false,
   oxidationVisible: true,
   oxidationProgress: 1,
+  oxidationDotCount: DEFAULT_DOT_COUNT,
   directionalLinking: true,
   bootstrapped: false,
   library,
@@ -806,6 +817,7 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
     ? { pathId: state.nodeSelection.pathId, nodeIds: [...state.nodeSelection.nodeIds] }
     : null,
   oxidationProgress: state.oxidationProgress,
+  oxidationDotCount: state.oxidationDotCount,
   zoom: state.zoom,
 });
 
@@ -837,6 +849,7 @@ type WorkspaceActions = {
   pushWarning: (message: string, level?: 'info' | 'warning' | 'error') => void;
   dismissWarning: (id: string) => void;
   toggleOxidationVisible: (value: boolean) => void;
+  setOxidationDotCount: (value: number) => void;
   markBootstrapped: () => void;
   saveShapeToLibrary: (pathId: string, name: string) => void;
   removeShapeFromLibrary: (shapeId: string) => void;
@@ -1239,6 +1252,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     warnings: state.warnings.filter((warning) => warning.id !== id),
   })),
   toggleOxidationVisible: (value) => set({ oxidationVisible: value }),
+  setOxidationDotCount: (value) => set({ oxidationDotCount: clampDotCount(value) }),
   markBootstrapped: () => set({ bootstrapped: true }),
   saveShapeToLibrary: (pathId, name) =>
     set((state) => {
@@ -1306,6 +1320,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       future: [],
       dirty: true,
       bootstrapped: true,
+      oxidationDotCount: DEFAULT_DOT_COUNT,
     })),
   undo: () => {
     const { history } = get();
@@ -1326,6 +1341,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         future: [...state.future, futureSnapshot].slice(-50),
         dirty: true,
         oxidationProgress: previous.oxidationProgress,
+        oxidationDotCount: previous.oxidationDotCount,
         zoom: previous.zoom,
       };
     });
@@ -1349,6 +1365,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         future: remaining,
         dirty: true,
         oxidationProgress: snapshot.oxidationProgress,
+        oxidationDotCount: snapshot.oxidationDotCount,
         zoom: snapshot.zoom,
       };
     });
@@ -1359,6 +1376,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       ...payload,
       oxidationVisible: payload.oxidationVisible ?? true,
       oxidationProgress: payload.oxidationProgress ?? 1,
+      oxidationDotCount: clampDotCount(payload.oxidationDotCount ?? DEFAULT_DOT_COUNT),
       directionalLinking: payload.directionalLinking ?? true,
       bootstrapped: payload.bootstrapped ?? true,
       library: state.library.map(cloneStoredShape),

@@ -156,3 +156,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-11-02 — Open-path envelope maximises global headings
 
 - Open-path circle envelopes now pick the visible heading with the greatest compass radius instead of clamping to the sample’s inward normal. Preserve this maximisation so straight segments continue to follow the global orientation regardless of their tangent direction.
+
+## 2025-11-03 — Compass dot preview overlay
+
+- The canvas no longer renders the oxide ribbon or dashed inner contour; `drawContours` now only strokes the outer path with a solid line. Keep it this way so the preview stays focused on per-point dots.
+- Line oxidation is visualised through `drawOxidationDots`, which drops translated compass patches along each sampled slice. Respect `oxidationDotCount` and the `oxidationVisible` flag when adjusting this overlay.
+- The Oxidation panel exposes a “Line preview dots” slider (0–1000). When touching the store, continue to clamp values via `clampDotCount` so undo/redo snapshots remain consistent.
