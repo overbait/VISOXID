@@ -27,7 +27,16 @@ import {
   resampleClosedPolygon,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
-import { alignLoop, clamp, distance, dot, lerp, normalize, sub } from '../utils/math';
+import {
+  alignLoop,
+  clamp,
+  distance,
+  dot,
+  length,
+  lerp,
+  normalize,
+  sub,
+} from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -667,15 +676,47 @@ const deriveInnerGeometry = (
         i === samples.length - 1
           ? 1
           : (sample.parameter + samples[i + 1].parameter) / 2;
-      let bestProjection = dot(sub(bestBySample[i], origin), inward);
+      const fallbackVector = sub(bestBySample[i], origin);
+      let bestProjection = dot(fallbackVector, inward);
+      let bestTangential = 0;
+
+      if (bestProjection > 0) {
+        const projectionVector = {
+          x: inward.x * bestProjection,
+          y: inward.y * bestProjection,
+        };
+        const tangential = sub(fallbackVector, projectionVector);
+        bestTangential = length(tangential);
+      }
 
       for (const candidate of candidatePoints) {
         if (candidate.parameter + EPS < minParameter || candidate.parameter - EPS > maxParameter) {
           continue;
         }
-        const projection = dot(sub(candidate.point, origin), inward);
-        if (projection > bestProjection) {
+        const delta = sub(candidate.point, origin);
+        const projection = dot(delta, inward);
+        if (projection <= 0) {
+          continue;
+        }
+
+        const projected = { x: inward.x * projection, y: inward.y * projection };
+        const tangential = sub(delta, projected);
+        const tangentialMagnitude = length(tangential);
+        const tangentialLimit = Math.max(projection * 1.1, sample.thickness * 0.5, 0.05);
+
+        if (tangentialMagnitude > tangentialLimit) {
+          continue;
+        }
+
+        const projectionImprovement = projection - bestProjection;
+        const projectionComparable = Math.abs(projectionImprovement) <= 1e-5;
+
+        if (
+          projectionImprovement > 1e-5 ||
+          (projectionComparable && tangentialMagnitude + 1e-4 < bestTangential)
+        ) {
           bestProjection = projection;
+          bestTangential = tangentialMagnitude;
           bestBySample[i] = candidate.point;
         }
       }

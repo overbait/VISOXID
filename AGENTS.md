@@ -159,3 +159,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - When fanning contour copies along open segments, only consider candidates whose path parameter overlaps the sample’s neighbourhood so remote copies can’t tug the oxide inward from the opposite side of the trace.
 - Keep open paths from auto-snapping closed when their endpoints meet; designers must explicitly close loops elsewhere if needed.
+
+## 2025-10-24 — Tangential guard for replicated open envelopes
+
+- Open-path oxidation now rejects replicated contour hits whose sideways drift exceeds ~10 % of their inward travel (with a small absolute floor) before picking the innermost sample. This keeps the preview from folding back across corners when neighbouring segments overlap.
+- When comparing candidates with similar inward travel, prefer the one with the smaller tangential component so the resulting polyline hugs the expected side of the trace.
