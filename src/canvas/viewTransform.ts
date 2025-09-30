@@ -5,17 +5,24 @@ export interface ViewTransform {
   offsetX: number;
   offsetY: number;
   extent: number;
+  zoom: number;
 }
 
 export const VIEW_EXTENT_UM = 50;
 
-export const computeViewTransform = (width: number, height: number): ViewTransform => {
+export const computeViewTransform = (
+  width: number,
+  height: number,
+  zoom = 1,
+): ViewTransform => {
   const extent = VIEW_EXTENT_UM;
   const span = Math.max(Math.min(width, height), 1);
-  const scale = span / extent || 1;
-  const offsetX = (width - extent * scale) / 2;
-  const offsetY = (height - extent * scale) / 2;
-  return { scale: scale || 1, offsetX, offsetY, extent };
+  const clampedZoom = Math.max(0.1, Math.min(zoom, 10));
+  const scale = (span / extent) * clampedZoom || 1;
+  const viewportExtent = extent / clampedZoom;
+  const offsetX = (width - viewportExtent * scale) / 2;
+  const offsetY = (height - viewportExtent * scale) / 2;
+  return { scale: scale || 1, offsetX, offsetY, extent: viewportExtent, zoom: clampedZoom };
 };
 
 export const worldToCanvas = (point: Vec2, view: ViewTransform): Vec2 => ({

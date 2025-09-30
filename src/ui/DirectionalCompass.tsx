@@ -5,14 +5,15 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { evalThicknessForAngle } from '../geometry';
 import type { DirectionWeight } from '../types';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
 
 const CANVAS_SIZE = 260;
 const OUTER_RADIUS = CANVAS_SIZE / 2 - 18;
-const INNER_CLEAR_RADIUS = 34;
-const MIN_SPOKE_LENGTH = 18;
+const CENTER_DOT_RADIUS = 10;
+const MIN_SPOKE_RADIUS = CENTER_DOT_RADIUS + 18;
 const ADD_RING_INNER = OUTER_RADIUS - 20;
 const ADD_RING_OUTER = OUTER_RADIUS + 14;
 
@@ -76,10 +77,10 @@ const valueToColor = (value: number): string => {
   return `rgb(${last.color.map((c) => Math.round(c)).join(', ')})`;
 };
 
-const spokeLengthForValue = (value: number): number => {
+const spokeRadiusForValue = (value: number): number => {
   const ratio = Math.min(Math.max(value / 10, 0), 1);
-  const maxLength = OUTER_RADIUS - INNER_CLEAR_RADIUS - 8;
-  return MIN_SPOKE_LENGTH + ratio * Math.max(maxLength, 0);
+  const maxRadius = OUTER_RADIUS - 24;
+  return MIN_SPOKE_RADIUS + ratio * Math.max(maxRadius - MIN_SPOKE_RADIUS, 0);
 };
 
 const smallestAngleDelta = (a: number, b: number): number => {
@@ -89,18 +90,15 @@ const smallestAngleDelta = (a: number, b: number): number => {
 
 export const DirectionalCompass = () => {
   const defaults = useWorkspaceStore((state) => state.oxidationDefaults);
-  const selectedPath = useWorkspaceStore((state) => {
-    const first = state.selectedPathIds[0];
-    return first ? state.paths.find((path) => path.meta.id === first) ?? null : null;
-  });
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
-  const updateSelected = useWorkspaceStore((state) => state.updateSelectedOxidation);
   const linking = useWorkspaceStore((state) => state.directionalLinking);
   const setLinking = useWorkspaceStore((state) => state.setDirectionalLinking);
+  const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
 
-  const activeWeights = selectedPath
-    ? selectedPath.oxidation.thicknessByDirection.items
-    : defaults.thicknessByDirection.items;
+  const activeWeights = defaults.thicknessByDirection.items;
+
+  const activeUniform = defaults.thicknessUniformUm;
+  const activeMirror = defaults.mirrorSymmetry;
 
   const sortedWeights = useMemo(() => sortByAngle(activeWeights), [activeWeights]);
 
@@ -108,6 +106,41 @@ export const DirectionalCompass = () => {
   const [adding, setAdding] = useState(false);
   const [addPreview, setAddPreview] = useState<{ angle: number; distance: number } | null>(null);
 
+  const thicknessOptions = useMemo(
+    () => ({
+      uniformThickness: activeUniform,
+      weights: sortedWeights,
+      mirrorSymmetry: activeMirror,
+      progress: oxidationProgress,
+    }),
+    [activeMirror, activeUniform, oxidationProgress, sortedWeights],
+  );
+
+  const previewData = useMemo(() => {
+    const segments = Math.max(96, sortedWeights.length * 12, 160);
+    const points: Array<{ x: number; y: number }> = [];
+    let maxRadius = MIN_SPOKE_RADIUS;
+    for (let i = 0; i < segments; i += 1) {
+      const theta = (i / segments) * Math.PI * 2;
+      const thickness = evalThicknessForAngle(theta, thicknessOptions);
+      const radius = spokeRadiusForValue(thickness);
+      maxRadius = Math.max(maxRadius, radius);
+      points.push(polarToCartesian(theta, radius));
+    }
+    if (!points.length) {
+      return { path: '', maxRadius: MIN_SPOKE_RADIUS };
+    }
+    const [first, ...rest] = points;
+    const path = [
+      `M ${first.x.toFixed(2)} ${first.y.toFixed(2)}`,
+      ...rest.map((point) => `L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`),
+      'Z',
+    ].join(' ');
+    return { path, maxRadius };
+  }, [sortedWeights, thicknessOptions]);
+
+  const scaledUniform = clampValue(activeUniform * oxidationProgress);
+  const uniformRadius = spokeRadiusForValue(scaledUniform);
   useEffect(() => {
     if (selectedId && !sortedWeights.some((weight) => weight.id === selectedId)) {
       setSelectedId(null);
@@ -122,15 +155,8 @@ export const DirectionalCompass = () => {
           items: nextItems,
         },
       });
-      if (selectedPath) {
-        updateSelected({
-          thicknessByDirection: {
-            items: nextItems,
-          },
-        });
-      }
     },
-    [sortedWeights, selectedPath, updateDefaults, updateSelected],
+    [sortedWeights, updateDefaults],
   );
 
   const handleValueChange = useCallback(
@@ -139,20 +165,15 @@ export const DirectionalCompass = () => {
         const next = sortByAngle(items);
         const index = next.findIndex((item) => item.id === id);
         if (index === -1) return next;
-        next[index] = { ...next[index], valueUm: clampValue(value) };
-        if (linking && next.length > 1) {
-          const prevIndex = (index - 1 + next.length) % next.length;
-          const nextIndex = (index + 1) % next.length;
-          const adjusted = next[index].valueUm;
-          next[prevIndex] = {
-            ...next[prevIndex],
-            valueUm: (next[prevIndex].valueUm + adjusted) / 2,
-          };
-          next[nextIndex] = {
-            ...next[nextIndex],
-            valueUm: (next[nextIndex].valueUm + adjusted) / 2,
-          };
+        const clamped = clampValue(value);
+        if (linking && next.length > 0) {
+          const delta = clamped - next[index].valueUm;
+          return next.map((item) => ({
+            ...item,
+            valueUm: clampValue(item.valueUm + delta),
+          }));
         }
+        next[index] = { ...next[index], valueUm: clamped };
         return next;
       });
     },
@@ -170,21 +191,18 @@ export const DirectionalCompass = () => {
         }
         const insertIndex = next.findIndex((item) => angle < item.angleDeg);
         const label = nextLabel(next);
+        const baseValue = next.length
+          ? next.reduce((sum, item) => sum + item.valueUm, 0) / next.length
+          : 0;
         const newWeight: DirectionWeight = {
           id: createId('dir'),
           label,
           angleDeg: angle,
-          valueUm: 0,
+          valueUm: linking ? baseValue : 0,
         };
         createdId = newWeight.id;
         const targetIndex = insertIndex === -1 ? next.length : insertIndex;
         next.splice(targetIndex, 0, newWeight);
-        if (linking && next.length > 1) {
-          const prevIndex = (targetIndex - 1 + next.length) % next.length;
-          const nextIndex = (targetIndex + 1) % next.length;
-          const average = (next[prevIndex].valueUm + next[nextIndex].valueUm) / 2;
-          next[targetIndex] = { ...newWeight, valueUm: average };
-        }
         return next;
       });
       if (createdId) {
@@ -285,19 +303,45 @@ export const DirectionalCompass = () => {
     [handleValueChange, sortedWeights],
   );
 
+  const handleAngleChange = useCallback(
+    (id: string, value: number) => {
+      applyWeights((items) => {
+        const next = sortByAngle(items);
+        const index = next.findIndex((item) => item.id === id);
+        if (index === -1) return next;
+        const angle = wrapAngle(value);
+        if (
+          next.some(
+            (item, itemIndex) => itemIndex !== index && smallestAngleDelta(item.angleDeg, angle) < 0.5,
+          )
+        ) {
+          return next;
+        }
+        next[index] = { ...next[index], angleDeg: angle };
+        return sortByAngle(next);
+      });
+    },
+    [applyWeights],
+  );
+
+  const handleLabelChange = useCallback(
+    (id: string, value: string) => {
+      const trimmed = value.trim().toUpperCase().slice(0, 2) || '?';
+      applyWeights((items) => {
+        const next = sortByAngle(items);
+        const index = next.findIndex((item) => item.id === id);
+        if (index === -1) return next;
+        next[index] = { ...next[index], label: trimmed };
+        return next;
+      });
+    },
+    [applyWeights],
+  );
+
   const selectedWeight = useMemo(
     () => sortedWeights.find((item) => item.id === selectedId) ?? null,
     [selectedId, sortedWeights],
   );
-
-  const selectedPopover = useMemo(() => {
-    if (!selectedWeight) return null;
-    const angleRad = toRadians(selectedWeight.angleDeg);
-    const length = spokeLengthForValue(selectedWeight.valueUm);
-    const anchorRadius = Math.max(INNER_CLEAR_RADIUS + length / 2, INNER_CLEAR_RADIUS + 12);
-    const anchor = polarToCartesian(angleRad, anchorRadius);
-    return { anchor, weight: selectedWeight };
-  }, [selectedWeight]);
 
   useEffect(() => {
     if (!adding) {
@@ -310,9 +354,7 @@ export const DirectionalCompass = () => {
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="section-title">Directional weights</div>
-          <div className="text-xs text-muted">
-            {selectedPath ? selectedPath.meta.name : 'Scene defaults'} · {sortedWeights.length} headings
-          </div>
+          <div className="text-xs text-muted">Global oxidation profile · {sortedWeights.length} headings</div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -388,12 +430,31 @@ export const DirectionalCompass = () => {
             <circle
               cx={CANVAS_SIZE / 2}
               cy={CANVAS_SIZE / 2}
-              r={INNER_CLEAR_RADIUS}
-              fill="rgba(255,255,255,0.85)"
-              stroke="rgba(37, 99, 235, 0.2)"
-              strokeWidth={1}
-              strokeDasharray="6 6"
+              r={CENTER_DOT_RADIUS}
+              fill="rgba(37, 99, 235, 0.15)"
+              stroke="rgba(37, 99, 235, 0.4)"
+              strokeWidth={2}
             />
+            {uniformRadius > CENTER_DOT_RADIUS && (
+              <circle
+                cx={CANVAS_SIZE / 2}
+                cy={CANVAS_SIZE / 2}
+                r={uniformRadius}
+                fill="rgba(37, 99, 235, 0.04)"
+                stroke="rgba(37, 99, 235, 0.25)"
+                strokeWidth={1.5}
+                strokeDasharray="6 6"
+              />
+            )}
+            {previewData.path && (
+              <path
+                d={previewData.path}
+                fill="rgba(37, 99, 235, 0.08)"
+                stroke="rgba(37, 99, 235, 0.45)"
+                strokeWidth={2}
+                strokeLinejoin="round"
+              />
+            )}
             {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => {
               const rad = toRadians(angle);
               const inner = polarToCartesian(rad, OUTER_RADIUS - 12);
@@ -413,21 +474,21 @@ export const DirectionalCompass = () => {
             })}
             {addPreview && (
               <line
-                x1={polarToCartesian(toRadians(addPreview.angle), OUTER_RADIUS - 6).x}
-                y1={polarToCartesian(toRadians(addPreview.angle), OUTER_RADIUS - 6).y}
-                x2={polarToCartesian(toRadians(addPreview.angle), INNER_CLEAR_RADIUS + MIN_SPOKE_LENGTH).x}
-                y2={polarToCartesian(toRadians(addPreview.angle), INNER_CLEAR_RADIUS + MIN_SPOKE_LENGTH).y}
+                x1={polarToCartesian(toRadians(addPreview.angle), CENTER_DOT_RADIUS).x}
+                y1={polarToCartesian(toRadians(addPreview.angle), CENTER_DOT_RADIUS).y}
+                x2={polarToCartesian(toRadians(addPreview.angle), spokeRadiusForValue(5)).x}
+                y2={polarToCartesian(toRadians(addPreview.angle), spokeRadiusForValue(5)).y}
                 stroke="#2563eb"
                 strokeWidth={5}
                 strokeLinecap="round"
-                opacity={0.5}
+                opacity={0.4}
               />
             )}
             {sortedWeights.map((weight) => {
               const angleRad = toRadians(weight.angleDeg);
-              const length = spokeLengthForValue(weight.valueUm);
-              const start = polarToCartesian(angleRad, OUTER_RADIUS - length);
-              const end = polarToCartesian(angleRad, OUTER_RADIUS - 4);
+              const radius = spokeRadiusForValue(weight.valueUm);
+              const start = polarToCartesian(angleRad, CENTER_DOT_RADIUS);
+              const end = polarToCartesian(angleRad, radius);
               const color = valueToColor(weight.valueUm);
               const isSelected = selectedId === weight.id;
               return (
@@ -447,21 +508,50 @@ export const DirectionalCompass = () => {
               );
             })}
           </svg>
-          {selectedPopover && (
-            <div
-              className="pointer-events-auto absolute flex -translate-x-1/2 -translate-y-1/2 flex-col gap-2 rounded-2xl border border-border bg-white/95 p-3 shadow"
-              style={{ left: selectedPopover.anchor.x, top: selectedPopover.anchor.y }}
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-center justify-between gap-3 text-[11px] font-semibold text-muted">
-                <span>{selectedPopover.weight.label}</span>
-                <span>{selectedPopover.weight.angleDeg.toFixed(1)}°</span>
-              </div>
+          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[10px] font-semibold text-accent">
+            0
+          </div>
+          {adding && (
+            <div className="pointer-events-none absolute inset-0 rounded-full border-2 border-dashed border-accent/40" />
+          )}
+        </div>
+        <div className="text-center text-[11px] text-muted">
+          Click a spoke to adjust its μm offset below. Enable the chain to move every heading together. Toggle the plus icon
+          and click the outer rim to add a new heading.
+        </div>
+      </div>
+      <div className="rounded-2xl border border-border/70 bg-white/80 p-4">
+        {selectedWeight ? (
+          <div className="flex flex-col gap-3 text-xs text-muted">
+            <div className="flex items-center gap-2">
+              <label className="flex w-20 flex-col text-[11px] font-semibold text-muted">
+                Label
+                <input
+                  type="text"
+                  maxLength={2}
+                  value={selectedWeight.label}
+                  onChange={(event) => handleLabelChange(selectedWeight.id, event.target.value)}
+                  className="mt-1 rounded-full border border-border px-3 py-1 text-sm font-semibold text-text focus:border-accent focus:outline-none"
+                />
+              </label>
+              <label className="flex flex-1 flex-col text-[11px] font-semibold text-muted">
+                Angle (°)
+                <input
+                  type="number"
+                  step={0.1}
+                  value={selectedWeight.angleDeg.toFixed(1)}
+                  onChange={(event) => handleAngleChange(selectedWeight.id, Number(event.target.value))}
+                  className="mt-1 rounded-full border border-border px-3 py-1 text-sm font-semibold text-text focus:border-accent focus:outline-none"
+                />
+              </label>
+            </div>
+            <div className="flex items-center gap-2 text-[11px] font-semibold text-muted">
+              <span className="w-20">Thickness</span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
-                  onClick={() => handleNudge(selectedPopover.weight.id, -0.1)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
+                  onClick={() => handleNudge(selectedWeight.id, -0.1)}
                 >
                   –
                 </button>
@@ -470,31 +560,29 @@ export const DirectionalCompass = () => {
                   min={0}
                   max={10}
                   step={0.1}
-                  value={selectedPopover.weight.valueUm.toFixed(1)}
-                  onChange={(event) =>
-                    handleValueChange(selectedPopover.weight.id, Number(event.target.value))
-                  }
-                  className="w-20 rounded-full border border-border px-3 py-1 text-center text-sm font-semibold text-text focus:border-accent focus:outline-none"
+                  value={selectedWeight.valueUm.toFixed(1)}
+                  onChange={(event) => handleValueChange(selectedWeight.id, Number(event.target.value))}
+                  className="w-24 rounded-full border border-border px-3 py-1 text-center text-sm font-semibold text-text focus:border-accent focus:outline-none"
                 />
                 <button
                   type="button"
-                  className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
-                  onClick={() => handleNudge(selectedPopover.weight.id, 0.1)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-border text-sm text-muted hover:border-accent hover:text-accent"
+                  onClick={() => handleNudge(selectedWeight.id, 0.1)}
                 >
                   +
                 </button>
               </div>
-              <div className="text-[10px] text-muted">Press Delete to remove · value in μm</div>
+              <span className="text-[11px] text-muted">μm</span>
             </div>
-          )}
-          {adding && (
-            <div className="pointer-events-none absolute inset-0 rounded-full border-2 border-dashed border-accent/40" />
-          )}
-        </div>
-        <div className="text-center text-[11px] text-muted">
-          Click a spoke to adjust its μm offset. Use the chain to blend neighbours. Toggle the plus icon and
-          click the outer rim to add a new heading.
-        </div>
+            <div className="rounded-xl bg-accentSoft/40 px-3 py-2 text-[10px] text-muted">
+              Delete removes the spoke. Angles wrap automatically; spokes cannot overlap closer than 0.5°.
+            </div>
+          </div>
+        ) : (
+          <div className="text-center text-[11px] text-muted">
+            Select a spoke to edit its label, heading angle, and μm contribution. Use the plus rim to add more headings.
+          </div>
+        )}
       </div>
     </div>
   );

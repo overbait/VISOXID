@@ -4,8 +4,8 @@ import type { ToolId } from '../types';
 
 const tools: Array<{ id: ToolId; label: string; shortcut: string }> = [
   { id: 'select', label: 'Select', shortcut: 'V' },
-  { id: 'pen', label: 'Pen', shortcut: 'P' },
-  { id: 'edit', label: 'Edit', shortcut: 'E' },
+  { id: 'line', label: 'Line', shortcut: 'L' },
+  { id: 'dot', label: 'Dot', shortcut: 'D' },
   { id: 'oxidize', label: 'Oxidize', shortcut: 'O' },
   { id: 'measure', label: 'Measure', shortcut: 'M' },
   { id: 'pan', label: 'Pan', shortcut: 'Space' },
