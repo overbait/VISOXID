@@ -1,7 +1,7 @@
 export type ToolId =
   | 'select'
-  | 'pen'
-  | 'edit'
+  | 'line'
+  | 'dot'
   | 'measure'
   | 'oxidize'
   | 'pan'
@@ -140,6 +140,8 @@ export interface WorkspaceSnapshot {
   activeTool: ToolId;
   nodeSelection: NodeSelection | null;
   oxidationProgress: number;
+  oxidationDotCount: number;
+  zoom: number;
 }
 
 export interface WorkspaceState {
@@ -157,9 +159,11 @@ export interface WorkspaceState {
   dirty: boolean;
   oxidationVisible: boolean;
   oxidationProgress: number;
+  oxidationDotCount: number;
   directionalLinking: boolean;
   bootstrapped: boolean;
   library: StoredShape[];
+  zoom: number;
 }
 
 export interface ExportedProject {

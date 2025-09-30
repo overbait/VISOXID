@@ -103,3 +103,62 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `deriveInnerGeometry` now builds a dense envelope by sampling the visible arcs of each per-sample oxidation circle (minimum six points per segment) before resampling back to the original sample count. Preserve this arc sampling when tuning offsets so the inner contour keeps circular curvature instead of collapsing to straight chords.
 - The dense arc cloud is cleaned separately and exposed through `innerPolygons`; reuse the `closedDenseLoop` helper when exporting or debugging to avoid reintroducing duplicate closing vertices.
 - Arc sampling depends on the outer loop orientation; if you change how samples are ordered, recompute the `orientationSign` in lock-step so arc traversal stays consistent.
+
+## 2025-10-15 — Compass polygon weights & point oxidation
+
+- Directional thickness is now evaluated by interpolating the polygon traced by compass spokes (with the centre treated as `0 μm`) instead of cosine falloffs. When mirroring angles, average the mirrored polygon value with the primary before combining with the uniform baseline.
+- The compass chain toggle now applies linked edits to every heading by the same delta. Adding a heading while linked seeds it with the mean of the existing spokes so the polygon stays watertight.
+- Standalone sample points (paths reduced to a single node) synthesise an oxide patch by sampling the compass polygon into `innerPolygons`. The canvas renderer fills these loops directly for point oxidations—keep this branch intact when reworking contour drawing.
+- The default oxide resolution tightened to `min(0.35, uniform/6)` so envelopes retain more geometry before smoothing; preserve this when tuning tolerances to avoid reintroducing faceting at joins.
+
+## 2025-10-16 — Compass preview hull & open-path smoothing
+
+- The directional compass now draws the evaluated oxidation hull (including the uniform baseline) so designers can see the active contour while adjusting spokes. When tweaking these visuals, keep the hull in sync with `evalThicknessForAngle` and respect the current oxidation progress scalar.
+- Uniform thickness renders as a dashed ring beneath the hull; leave it in place so users can distinguish baseline thickness from directional spikes.
+- Single-node paths rely on a synthetic sample so the geometry pipeline always produces a dense radial patch—preserve this guard when editing `runGeometryPipeline`.
+- Open polylines smooth their inner samples with a light Laplacian pass before enforcing the minimum offset. Any future changes must keep the smoothing before the min-distance clamp to avoid kinks returning at sharp bends.
+
+## 2025-10-17 — Global compass inspector & measurement alignment
+
+- The compass card now edits a single global oxidation profile. Updating spokes, uniform thickness, or mirror symmetry must route through `updateOxidationDefaults`, which propagates the merged settings to every path via `applyGlobalOxidation`. Do not reintroduce per-path overrides.
+- Compass spokes expose their label, angle, and μm contribution inside the inspector beneath the dial. Preserve the angle collision guard (0.5° minimum separation) when extending these controls.
+- Point oxidation loops use the compass orientation directly (`center + cos/sin`). Keep this sign so the canvas profile matches the compass preview.
+- Open-path inner samples receive a tangential offset derived from ±90° compass evaluations before smoothing—retain this blend so straight traces bow in response to directional weights.
+- The measurement tool now queries the global profile along the drag heading. Keep `sampleGlobalThickness` intact so drags anywhere on the canvas reflect oxidation distance rather than raw Euclidean length.
+- Tool ids `pen`/`edit` were replaced with `line`/`dot` (with `dot` spawning a single-node path). Update shortcuts or hit-tests using these ids and leave the square canvas container in place; avoid restoring the old stretched viewport.
+
+## 2025-10-18 — Pointer-oriented probes & open-line envelopes
+
+- Hover measurements now orient toward the pointer direction, sampling the compass contour for that heading and mirroring single-node (dot) paths around their center. Preserve the pointer-driven fallback when tweaking hit-tests so probes appear on any side of a dot.
+- Open polylines derive their inner contour from the same circle-envelope union used for closed loops before enforcing the minimum offset. Avoid reinstating the old tangential delta—straight traces should bow to match the compass hull.
+
+## 2025-10-19 — Global zoom & compass-driven open envelopes
+
+- The canvas viewport now stores a `zoom` scalar in workspace state, exposes slider/± controls in the viewport overlay, and honours Ctrl/⌘ + wheel gestures. When using `computeViewTransform`, always pass the current zoom so hit-testing and rendering stay aligned.
+- `computeCircleEnvelope` evaluates the compass polygon per arc direction and, for open paths, samples the full 360° envelope. Keep passing the active `ThicknessOptions` so directional edits immediately bend open-line oxidation.
+- Minimum-offset enforcement preserves tangential displacement; only push samples along their normal when the travelled distance drops below the required thickness. This keeps globally biased oxidations from snapping back to straight lines.
+
+## 2025-10-20 — Compass envelope orientation floor
+
+- `computeCircleEnvelope` now evaluates arc radii directly from the compass polygon per heading instead of clamping to the sample’s own offset. Leave the min-distance enforcement in `deriveInnerGeometry` to guarantee the requested thickness instead of reintroducing local `Math.max` guards.
+- Dense arc sampling pushes every chosen candidate point into the `denseLoop` and bumps the minimum subdivisions to 12 so closed loops keep enough geometry to avoid collapsing when forms are sealed.
+
+## 2025-10-31 — Circle envelope arc coverage
+
+- `computeCircleEnvelope` now feeds every visible arc segment (post-occlusion) into the dense loop, preferring arcs that face inward on open spans. Keep this sweep intact so the dashed oxide contour reflects contributions from all headings without reintroducing the heavy radial spoke sampling.
+- Closed-loop envelopes reject any arc segments that fail the inward-facing check instead of falling back to outward spans. If no inward arc survives the occlusion sweep, the solver reverts to the sample’s baseline normal projection so compass biases stay aligned with the same global heading everywhere on the contour.
+- Arc subdivision counts depend on the arc span and current resolution; avoid dropping below two samples per arc or narrow intersections between circles will disappear from the preview.
+
+## 2025-11-01 — Global compass orientation for open paths
+
+- Circle envelopes now evaluate compass radii in world space for open paths instead of mirroring across the inward normal. When tuning the solver, keep `options.restrictToInward` as the switch between inward-only (closed loops) and global headings (open traces) so compass edits stay aligned with the same absolute orientation everywhere.
+
+## 2025-11-02 — Open-path envelope maximises global headings
+
+- Open-path circle envelopes now pick the visible heading with the greatest compass radius instead of clamping to the sample’s inward normal. Preserve this maximisation so straight segments continue to follow the global orientation regardless of their tangent direction.
+
+## 2025-11-03 — Compass dot preview overlay
+
+- The canvas no longer renders the oxide ribbon or dashed inner contour; `drawContours` now only strokes the outer path with a solid line. Keep it this way so the preview stays focused on per-point dots.
+- Line oxidation is visualised through `drawOxidationDots`, which drops translated compass patches along each sampled slice. Respect `oxidationDotCount` and the `oxidationVisible` flag when adjusting this overlay.
+- The Oxidation panel exposes a “Line preview dots” slider (0–1000). When touching the store, continue to clamp values via `clampDotCount` so undo/redo snapshots remain consistent.

@@ -1,6 +1,6 @@
 import type { WorkspaceState } from '../types';
 import { drawGrid } from './grid';
-import { drawContours } from './contours';
+import { drawContours, drawOxidationDots } from './contours';
 import { drawHandles } from './handles';
 import { drawHeatmap } from './heatmap';
 import { drawSnaps } from './snaps';
@@ -72,16 +72,30 @@ export class CanvasRenderer {
     this.ctx.clearRect(0, 0, width, height);
     const logicalWidth = width / this.dpr;
     const logicalHeight = height / this.dpr;
-    const view = computeViewTransform(logicalWidth, logicalHeight);
+    const view = computeViewTransform(logicalWidth, logicalHeight, state.zoom);
     drawGrid(this.ctx, state.grid, view);
     drawMirrorAxes(this.ctx, state.mirror, view);
     const showHeatmap = state.measurements.showHeatmap;
+    const showDots = state.oxidationVisible;
+    const dotCount = state.oxidationDotCount;
+    const progress = state.oxidationProgress;
+
     state.paths.forEach((path) => {
       const selected = state.selectedPathIds.includes(path.meta.id);
       if (showHeatmap) {
         drawHeatmap(this.ctx, path, view);
       }
-      drawContours(this.ctx, path, selected, state.oxidationVisible, view, state.mirror);
+      drawContours(this.ctx, path, selected, view, state.mirror);
+      drawOxidationDots(
+        this.ctx,
+        path,
+        selected,
+        dotCount,
+        progress,
+        view,
+        state.mirror,
+        showDots,
+      );
       drawHandles(this.ctx, path, selected, view, state.nodeSelection);
     });
     drawSnaps(this.ctx, state.paths, state.measurements, view);
