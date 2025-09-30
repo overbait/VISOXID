@@ -150,16 +150,23 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 ## 2025-10-22 — Open-line subdivision fidelity
 
-- Open polylines now up-sample every path segment into 10 uniform sub-segments before recomputing normals and evaluating compass weights. Preserve this densification when tweaking the pipeline so directional oxidation applies along the full span of straight traces.
+- Open polylines now up-sample every path segment into 30 uniform sub-segments before recomputing normals and evaluating compass weights. Preserve this densification when tweaking the pipeline so directional oxidation applies along the full span of straight traces.
 - The open-line inner contour now stitches the per-sample candidates directly—avoid inserting additional smoothing for these paths or thickness variations will smear back into segment averages.
 
 ## 2025-10-23 — Endpoint compass patches & open sampling tweaks
 
-- Open paths call the adaptive sampler with a minimal segment count (two samples per span) before applying the 10× subdivision pass so each inserted slice owns its compass evaluation instead of inheriting the earlier Bézier minimum of twelve.
+- Open paths call the adaptive sampler with a minimal segment count (two samples per span) before applying the 30× subdivision pass so each inserted slice owns its compass evaluation instead of inheriting the earlier Bézier minimum of twelve.
 - Both endpoints of open polylines now spawn compass-driven oxide patches using the same helper as standalone dots. Keep these loops in `innerPolygons` so the canvas can paint endpoint puddles in sync with compass edits.
 - The shared `sampleCompassPatch` helper backs the single-node branch too; update it when adjusting compass resolution so dots and line endpoints stay visually identical.
 
 ## 2025-10-24 — Uniform open-line sampling & pan tool translation
 
-- Open polylines now sample each original segment with ten uniform slices via `samplePathWithUniformSubdivisions`. Avoid reintroducing adaptive `minSamples` overrides or the hidden oxidation anchors will collapse on short spans.
+- Open polylines now sample each original segment with uniform slices via `samplePathWithUniformSubdivisions` (currently 30 per span). Avoid reintroducing adaptive `minSamples` overrides or the hidden oxidation anchors will collapse on short spans.
 - The viewport stores a persistent `pan` offset and the Pan tool drags this translation using pointer capture. Always pass the stored `pan` vector into `computeViewTransform` so rendering, hit-tests, and distance conversions stay aligned.
+
+## 2025-10-25 — Segment-isolated envelopes & bootstrap guard
+
+- Circle-envelope occlusion is now limited to samples from the same path segment whenever the path stays open. Do not restore cross-segment unioning—the designer expects independent oxidation lobes per straight span.
+- Open paths subdivide every segment into **30** uniform slices before recomputing normals to stabilise per-point compass weights. Keep this density so edge weights stay faithful to the compass profile.
+- The demo scene bootstrap flips the `bootstrapped` flag before inserting default geometry, preventing StrictMode from spawning duplicate reference circles. Avoid reordering this guard or the initial scene may double-load.
+- Follow-up task: derive a tangential hull for open segments by sampling ~30 compass-driven oxidation anchors per span and tracing the furthest tangent envelope (see the latest QA screenshot). Document progress in this handbook once implemented.

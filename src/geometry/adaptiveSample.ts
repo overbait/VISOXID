@@ -52,6 +52,7 @@ export const adaptiveSamplePath = (
         thickness: 0,
         curvature: estimateCurvature(curve, t),
         parameter: samples.length,
+        segmentIndex: i,
       });
     }
   }
@@ -112,6 +113,7 @@ export const samplePathWithUniformSubdivisions = (
         thickness: 0,
         curvature: estimateCurvature(curve, t),
         parameter: samples.length,
+        segmentIndex: i,
       });
     }
   }

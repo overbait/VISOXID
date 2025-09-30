@@ -181,16 +181,6 @@ const shiftNode = (node: PathNode, x: number, y: number): PathNode => {
   };
 };
 
-const mergeEndpointsIfClose = (
-  nodes: PathNode[],
-  alreadyClosed: boolean,
-): { nodes: PathNode[]; closed: boolean } => {
-  if (alreadyClosed || nodes.length < 2) {
-    return { nodes, closed: alreadyClosed };
-  }
-  return { nodes, closed: false };
-};
-
 const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']): PathNode[] => {
   if (!mirror.enabled) return nodes;
   return nodes.map((node) => {
@@ -207,7 +197,7 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 
 const TAU = Math.PI * 2;
 const EPS = 1e-6;
-const OPEN_SEGMENT_SUBDIVISIONS = 10;
+const OPEN_SEGMENT_SUBDIVISIONS = 30;
 
 const sampleCompassPatch = (
   center: Vec2,
@@ -401,6 +391,7 @@ interface EnvelopeOptions {
   orientationSign: number;
   resolution: number;
   restrictToInward: boolean;
+  allowCrossSegmentOcclusion: boolean;
 }
 
 const computeCircleEnvelope = (
@@ -451,6 +442,17 @@ const computeCircleEnvelope = (
       if (j === index) continue;
       const other = circles[j];
       if (other.radius <= EPS) continue;
+      if (!options.allowCrossSegmentOcclusion) {
+        const segment = sample.segmentIndex;
+        const otherSegment = samples[j]?.segmentIndex;
+        if (
+          segment !== undefined &&
+          otherSegment !== undefined &&
+          otherSegment !== segment
+        ) {
+          continue;
+        }
+      }
       const occluded = computeOcclusionIntervals(circle, other);
       if (occluded.length) {
         arcs = subtractIntervals(arcs, occluded);
@@ -621,6 +623,7 @@ const deriveInnerGeometry = (
         orientationSign: 1,
         resolution,
         restrictToInward: false,
+        allowCrossSegmentOcclusion: false,
       },
       thicknessOptions,
     );
@@ -643,6 +646,7 @@ const deriveInnerGeometry = (
       orientationSign,
       resolution,
       restrictToInward: true,
+      allowCrossSegmentOcclusion: true,
     },
     thicknessOptions,
   );
@@ -861,6 +865,7 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
           thickness: 0,
           curvature: 0,
           parameter: 0,
+          segmentIndex: 0,
         },
       ],
       length: 0,
@@ -955,12 +960,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         updatedAt: Date.now(),
       };
       const clonedNodes = nodes.map((node) => ({ ...node }));
-      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(
-        clonedNodes,
-        meta.closed,
-      );
-      const snapped = applyMirrorSnapping(mergedNodes, mirror);
-      const finalMeta = { ...meta, closed: meta.closed || closed };
+      const snapped = applyMirrorSnapping(clonedNodes, mirror);
+      const finalMeta = { ...meta };
       const newPath: PathEntity = runGeometryPipeline(
         {
           meta: finalMeta,
@@ -993,15 +994,14 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const history = [...state.history, captureSnapshot(state)].slice(-50);
       const target = state.paths[index];
       const nodes = updater(target.nodes.map((node) => ({ ...node })));
-      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, target.meta.closed);
-      const snapped = applyMirrorSnapping(mergedNodes, mirror);
+      const snapped = applyMirrorSnapping(nodes, mirror);
       const updated = runGeometryPipeline(
         {
           ...target,
           nodes: snapped,
           meta: {
             ...target.meta,
-            closed: target.meta.closed || closed,
+            closed: target.meta.closed,
             updatedAt: Date.now(),
           },
         },
@@ -1063,9 +1063,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         return state;
       }
       const history = [...state.history, captureSnapshot(state)].slice(-50);
-      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(remainingNodes, path.meta.closed);
-      const snapped = applyMirrorSnapping(mergedNodes, state.mirror);
-      const finalClosed = snapped.length >= 3 && closed;
+      const snapped = applyMirrorSnapping(remainingNodes, state.mirror);
+      const finalClosed = path.meta.closed && snapped.length >= 3;
       const updated = runGeometryPipeline(
         {
           ...path,
@@ -1141,13 +1140,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           applyHandles(nodeIndex, nextIndex);
         }
       }
-      const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, path.meta.closed);
-      const snapped = applyMirrorSnapping(mergedNodes, mirror);
+      const snapped = applyMirrorSnapping(nodes, mirror);
       const updated = runGeometryPipeline(
         {
           ...path,
           nodes: snapped,
-          meta: { ...path.meta, closed: path.meta.closed || closed, updatedAt: Date.now() },
+          meta: { ...path.meta, updatedAt: Date.now() },
         },
         state.oxidationProgress,
       );
@@ -1421,8 +1419,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
           },
         };
       }
-      const { nodes: mergedNodes } = mergeEndpointsIfClose(nodes, path.meta.closed);
-      const snapped = applyMirrorSnapping(mergedNodes, mirror);
+      const snapped = applyMirrorSnapping(nodes, mirror);
       const updated = runGeometryPipeline(
         {
           ...path,

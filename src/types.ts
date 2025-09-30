@@ -50,6 +50,7 @@ export interface SamplePoint {
   thickness: number;
   curvature: number;
   parameter: number;
+  segmentIndex?: number;
 }
 
 export interface SampledPath {

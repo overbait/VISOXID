@@ -22,7 +22,11 @@ export const App = () => {
   const markBootstrapped = useWorkspaceStore((state) => state.markBootstrapped);
 
   useEffect(() => {
-    if (!bootstrapped && pathCount === 0) {
+    if (bootstrapped) {
+      return;
+    }
+    markBootstrapped();
+    if (pathCount === 0) {
       addPath(createCircleNodes({ x: 25, y: 25 }, 18), {
         meta: {
           id: createId('path'),
@@ -36,7 +40,6 @@ export const App = () => {
         },
       });
       pushWarning('Demo geometry loaded', 'info');
-      markBootstrapped();
     }
   }, [addPath, bootstrapped, markBootstrapped, pathCount, pushWarning]);
 
