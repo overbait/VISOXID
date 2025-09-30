@@ -25,10 +25,9 @@ import {
   polygonArea,
   recomputeNormals,
   resampleClosedPolygon,
-  resampleOpenPolyline,
 } from '../geometry';
 import { laplacianSmooth } from '../geometry/smoothing';
-import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
+import { alignLoop, clamp, distance, dot, lerp, normalize, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 
@@ -218,6 +217,8 @@ const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']
 };
 
 const TAU = Math.PI * 2;
+const OPEN_CONTOUR_SAMPLES = 40;
+const SEGMENT_CONTOUR_COPIES = 10;
 const EPS = 1e-6;
 
 type Arc = { start: number; end: number };
@@ -541,6 +542,19 @@ const computeCircleEnvelope = (
   return { candidates, denseLoop: dense };
 };
 
+const sampleOxidationContour = (
+  thicknessOptions: ThicknessOptions,
+  count = OPEN_CONTOUR_SAMPLES,
+): Vec2[] => {
+  const samples: Vec2[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const angle = (i / count) * TAU;
+    const radius = Math.max(evalThicknessForAngle(angle, thicknessOptions), 0);
+    samples.push({ x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+  }
+  return samples;
+};
+
 const deriveInnerGeometry = (
   samples: SamplePoint[],
   closed: boolean,
@@ -604,31 +618,63 @@ const deriveInnerGeometry = (
       return { innerSamples: [], polygons: [] };
     }
 
-    const { candidates, denseLoop } = computeCircleEnvelope(
-      samples,
-      fallbackInner,
-      {
-        orientationSign: 1,
-        resolution,
-        restrictToInward: false,
-      },
-      thicknessOptions,
+    const contourOffsets = sampleOxidationContour(thicknessOptions, OPEN_CONTOUR_SAMPLES);
+    const inwardNormals = samples.map((sample) =>
+      normalize({ x: -sample.normal.x, y: -sample.normal.y }),
     );
+    const candidatePoints: Vec2[] = [];
 
-    let seededLoop = candidates;
+    for (let i = 0; i < samples.length - 1; i += 1) {
+      const current = samples[i];
+      const next = samples[i + 1];
+      const inwardA = inwardNormals[i];
+      const inwardB = inwardNormals[i + 1];
+      const subdivisions = Math.max(2, SEGMENT_CONTOUR_COPIES);
 
-    if (denseLoop.length >= 2 && samples.length >= 2) {
-      const resampled = resampleOpenPolyline(denseLoop, samples.length);
-      if (resampled.length === samples.length) {
-        const realigned = alignLoop(resampled, fallbackInner);
-        seededLoop = enforceMinimumOffset(realigned);
+      for (let step = 0; step < subdivisions; step += 1) {
+        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
+        const center = lerp(current.position, next.position, t);
+        const blendedInward = normalize({
+          x: inwardA.x * (1 - t) + inwardB.x * t,
+          y: inwardA.y * (1 - t) + inwardB.y * t,
+        });
+        if (blendedInward.x === 0 && blendedInward.y === 0) {
+          continue;
+        }
+
+        for (const offset of contourOffsets) {
+          if (dot(offset, blendedInward) <= 0) continue;
+          candidatePoints.push({ x: center.x + offset.x, y: center.y + offset.y });
+        }
       }
     }
 
-    const smoothingIterations = Math.min(3, Math.max(1, Math.round(samples.length / 12)));
-    const smoothed = laplacianSmooth(seededLoop, 0.38, smoothingIterations, { closed: false });
-    const enforced = enforceMinimumOffset(smoothed);
-    return { innerSamples: enforced, polygons: denseLoop.length >= 3 ? [denseLoop] : [] };
+    if (!candidatePoints.length) {
+      const enforcedFallback = enforceMinimumOffset(fallbackInner);
+      return { innerSamples: enforcedFallback, polygons: [] };
+    }
+
+    const bestBySample = fallbackInner.map((point) => ({ ...point }));
+    for (let i = 0; i < samples.length; i += 1) {
+      const sample = samples[i];
+      const inward = inwardNormals[i];
+      if (inward.x === 0 && inward.y === 0) {
+        continue;
+      }
+      const origin = sample.position;
+      let bestProjection = dot(sub(bestBySample[i], origin), inward);
+
+      for (const candidate of candidatePoints) {
+        const projection = dot(sub(candidate, origin), inward);
+        if (projection > bestProjection) {
+          bestProjection = projection;
+          bestBySample[i] = candidate;
+        }
+      }
+    }
+
+    const enforced = enforceMinimumOffset(bestBySample);
+    return { innerSamples: enforced, polygons: [] };
   }
 
   const outerLoop = samples.map((sample) => sample.position);

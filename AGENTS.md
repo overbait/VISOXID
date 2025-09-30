@@ -7,7 +7,7 @@ This project implements **Oxid Designer**, a Vite + React + TypeScript workbench
 - The oxidation pipeline now derives the inner contour by first carving a uniform baseline offset with Clipper and then layering per-heading expansions along the outward normals.  Preserve this sequence inside `runGeometryPipeline()` so the oxide shell always honours the configured minimum thickness.
 - Canvas interactions must respect the active tool in state (`select`, `pen`, `edit`, `measure`, etc.).  Selections, node manipulation, and measurement overlays are driven from `CanvasViewport` using store actions.
 - Units inside the UI are **micrometres (μm)**.  Never reintroduce raw pixel units in UI strings or overlays.
-- The oxide preview is drawn inside the canvas renderer.  Do not remove the gradient fill between the external contour and the oxidised inner contour unless a spec change requires it.
+- The oxide preview is drawn inside the canvas renderer.  The ribbon gradient and dashed outer stroke were retired in favour of a single-line preview—don’t restore them unless a future spec calls for it.
 
 ## Documentation Discipline
 
@@ -148,3 +148,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `deriveInnerGeometry` now resamples open-path `denseLoop` results back to the sampled resolution before aligning with `alignLoop`. After alignment, immediately call `enforceMinimumOffset` so tangential drift still respects the configured oxide floor.
 - A helper `resampleOpenPolyline` lives beside `resampleClosedPolygon`. Reuse it when you need evenly spaced open-line samples.
 - Added `docs/regressions/asymmetric-open-oxidation.svg` as a quick visual check for asymmetric envelopes on open paths. Keep it updated whenever the open-loop offset behaviour changes.
+
+## 2025-10-22 — Single-sided replicated oxide contour
+
+- Open-path envelopes now replicate the global oxidation contour (40 angular samples) along each segment (10 placements per span), keeping only the most inward intersections per sample. Skip smoothing and do not reuse the arc-union fallback.
+- Only expose the innermost line of the oxide preview for open paths—`polygons` stay empty so the renderer no longer shades the ribbon.
+- Canvas rendering removed the gradient ribbon and dashed outer stroke; draw both contours as solid lines to match the single-sided spec.

@@ -71,21 +71,9 @@ export const drawContours = (
     ctx.globalAlpha = emphasize ? 1 : 0.45;
     ctx.lineWidth = 1.8;
     ctx.strokeStyle = strokeColor;
-    ctx.setLineDash(path.meta.closed ? [] : [6, 3]);
+    ctx.setLineDash([]);
     strokePolyline(ctx, outerScreen, path.meta.closed);
     if (showOxide && outerScreen.length > 1 && innerScreen.length === outerScreen.length) {
-      for (let i = 1; i < outerScreen.length; i += 1) {
-        fillRibbon(ctx, outerScreen[i - 1], outerScreen[i], innerScreen[i], innerScreen[i - 1]);
-      }
-      if (path.meta.closed && outerScreen.length > 2) {
-        fillRibbon(
-          ctx,
-          outerScreen.at(-1)!,
-          outerScreen[0],
-          innerScreen[0],
-          innerScreen.at(-1)!,
-        );
-      }
       ctx.lineWidth = 1;
       ctx.strokeStyle = emphasize ? 'rgba(37, 99, 235, 0.7)' : 'rgba(37, 99, 235, 0.35)';
       strokePolyline(ctx, innerScreen, path.meta.closed);
@@ -118,26 +106,6 @@ export const drawContours = (
     innerWorld.length ? innerWorld : samples.map((sample) => sample.position),
     true,
   );
-};
-
-const fillRibbon = (
-  ctx: CanvasRenderingContext2D,
-  outerA: { x: number; y: number },
-  outerB: { x: number; y: number },
-  innerB: { x: number; y: number },
-  innerA: { x: number; y: number },
-) => {
-  const gradient = ctx.createLinearGradient(outerA.x, outerA.y, innerA.x, innerA.y);
-  gradient.addColorStop(0, 'rgba(37, 99, 235, 0.35)');
-  gradient.addColorStop(1, 'rgba(37, 99, 235, 0.05)');
-  ctx.fillStyle = gradient;
-  ctx.beginPath();
-  ctx.moveTo(outerA.x, outerA.y);
-  ctx.lineTo(outerB.x, outerB.y);
-  ctx.lineTo(innerB.x, innerB.y);
-  ctx.lineTo(innerA.x, innerA.y);
-  ctx.closePath();
-  ctx.fill();
 };
 
 const createMirroredVariants = (
