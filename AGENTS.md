@@ -176,3 +176,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Open polylines now reuse a shared compass-envelope context and evaluate tangents between every pair of neighbouring subdivision samples (30 per source segment) to pick the furthest inward oxidation anchor per slice. Keep this evaluation when tuning the pipeline so directional spokes bend the entire span, not just the endpoints.
 - Tangent comparisons stay local to a segment—continue to respect `segmentIndex` boundaries so adjacent spans do not merge their oxidation hulls implicitly.
 - The selected tangent anchors still pass through `enforceMinimumOffset`; do not bypass this clamp or the contour can recede past the requested compass thickness.
+
+## 2025-10-27 — Open-line arc maximisation
+
+- Open-path envelope sampling now scans every visible arc for the point that travels furthest along each slice’s inward normal. Preserve this search when tweaking the solver so compass spikes imprint across the full span instead of collapsing to the nearest angle.
+- Arc subdivision honours the resolution floor of `max(resolution * 0.5, 0.005)`; keep this limit so narrow lobes from the compass profile remain in the dense loop.

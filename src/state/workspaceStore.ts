@@ -273,8 +273,6 @@ const wrapAngle = (angle: number): number => {
   return wrapped;
 };
 
-const arcLength = (arc: Arc): number => arc.end - arc.start;
-
 const pushArc = (arcs: Arc[], start: number, end: number): void => {
   if (end - start <= EPS) return;
   arcs.push({ start, end });
@@ -332,20 +330,6 @@ const angularDistance = (a: number, b: number): number => {
 
 const angleInArc = (angle: number, arc: Arc): boolean =>
   angle >= arc.start - EPS && angle <= arc.end + EPS;
-
-const clampAngleToArc = (angle: number, arc: Arc): number => {
-  const length = arcLength(arc);
-  if (length <= EPS * 4) {
-    return wrapAngle(arc.start + length / 2);
-  }
-  if (angle <= arc.start) {
-    return arc.start + EPS;
-  }
-  if (angle >= arc.end) {
-    return arc.end - EPS;
-  }
-  return angle;
-};
 
 const toPointOnCircle = (circle: Circle, angle: number, radiusOverride?: number): Vec2 => {
   const radius = radiusOverride ?? circle.radius;
@@ -565,46 +549,86 @@ const computeCircleEnvelope = (
       selectedArc = bestArc;
     }
 
-    let chosenAngle: number | null = null;
+    const seenArcs = new Set<string>();
+    const arcKey = (arc: Arc): string => `${arc.start.toFixed(6)}:${arc.end.toFixed(6)}`;
+    const markSeen = (arc: Arc): void => {
+      seenArcs.add(arcKey(arc));
+    };
+    const isSeen = (arc: Arc): boolean => seenArcs.has(arcKey(arc));
+
+    const queue: Arc[] = [];
     if (selectedArc) {
-      chosenAngle = clampAngleToArc(inwardAngle, selectedArc);
-      const span = selectedArc.end - selectedArc.start;
-      const approxLength = baselineRadius * span;
-      const subdivisions = Math.max(12, Math.ceil(approxLength / Math.max(options.resolution, 0.01)));
+      queue.push(selectedArc);
+    }
+    for (const arc of availableArcs) {
+      if (selectedArc && Math.abs(arc.start - selectedArc.start) <= 1e-6 && Math.abs(arc.end - selectedArc.end) <= 1e-6) {
+        continue;
+      }
+      queue.push(arc);
+    }
+    if (!queue.length) {
+      queue.push(...arcs);
+    }
+
+    let bestCandidate: { angle: number; point: Vec2; distance: number } | null = null;
+
+    const evaluateArc = (arc: Arc): void => {
+      if (isSeen(arc)) return;
+      markSeen(arc);
+      const span = arc.end - arc.start;
+      if (span <= EPS) {
+        return;
+      }
+      const stepBase = Math.max(options.resolution * 0.5, 0.005);
+      const radiusStart = radiusForAngle(arc.start);
+      const radiusEnd = radiusForAngle(arc.end);
+      const approxRadius = Math.max(baselineRadius, radiusStart, radiusEnd);
+      const approxLength = Math.max(approxRadius * span, stepBase);
+      const subdivisions = Math.max(24, Math.ceil(approxLength / stepBase));
       const arcPoints: Vec2[] = [];
-      for (let step = 0; step < subdivisions; step += 1) {
-        const t = subdivisions <= 1 ? 0 : step / (subdivisions - 1);
-        const angle =
+      for (let step = 0; step <= subdivisions; step += 1) {
+        const t = subdivisions <= 0 ? 0 : step / subdivisions;
+        const rawAngle =
           options.orientationSign >= 0
-            ? selectedArc.start + span * t
-            : selectedArc.end - span * t;
+            ? arc.start + span * t
+            : arc.end - span * t;
+        const angle = wrapAngle(rawAngle);
         const radius = radiusForAngle(angle);
-        if (radius > EPS) {
-          arcPoints.push(toPointOnCircle(circle, angle, radius));
+        if (radius <= EPS) {
+          continue;
+        }
+        const point = toPointOnCircle(circle, angle, radius);
+        arcPoints.push(point);
+        const travel = inwardDistanceAlongNormal(sample, point);
+        if (!Number.isFinite(travel) || travel <= 0) {
+          continue;
+        }
+        if (!bestCandidate || travel > bestCandidate.distance + 1e-5) {
+          bestCandidate = { angle, point, distance: travel };
         }
       }
-      appendToDenseLoop(arcPoints);
+      if (arcPoints.length) {
+        appendToDenseLoop(arcPoints);
+      }
+    };
+
+    for (const arc of queue) {
+      evaluateArc(arc);
     }
 
-    if (chosenAngle === null) {
+    if (!bestCandidate) {
+      for (const arc of arcs) {
+        evaluateArc(arc);
+      }
+    }
+
+    if (!bestCandidate) {
       appendToDenseLoop([fallback]);
       return fallback;
     }
 
-    const candidateRadius = radiusForAngle(chosenAngle);
-    if (candidateRadius <= EPS) {
-      appendToDenseLoop([fallback]);
-      return fallback;
-    }
-    const candidate = toPointOnCircle(circle, chosenAngle, candidateRadius);
-    appendToDenseLoop([candidate]);
-    const direction = sub(candidate, sample.position);
-    if (!allowAllAngles && dot(direction, sample.normal) >= -EPS) {
-      appendToDenseLoop([fallback]);
-      return fallback;
-    }
-
-    return candidate;
+    appendToDenseLoop([bestCandidate.point]);
+    return bestCandidate.point;
   });
 
   const dense = (() => {
