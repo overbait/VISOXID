@@ -454,11 +454,12 @@ const computeCircleEnvelope = (
   options: EnvelopeOptions,
   thicknessOptions: ThicknessOptions,
   context?: CircleEnvelopeContext,
-): { candidates: Vec2[]; denseLoop: Vec2[] } => {
+): { candidates: Vec2[]; denseLoop: Vec2[]; profiles: Vec2[][] } => {
   const { circles, inwardAngles, radiusForAngle } =
     context ?? prepareCircleEnvelope(samples, thicknessOptions);
 
   const denseLoop: Vec2[] = [];
+  const profiles: Vec2[][] = samples.map(() => []);
 
   const appendToDenseLoop = (points: Vec2[]): void => {
     for (const point of points) {
@@ -513,6 +514,42 @@ const computeCircleEnvelope = (
 
     const inwardArc = arcs.find((arc) => angleInArc(inwardAngle, arc));
     const allowAllAngles = !options.restrictToInward;
+
+    const profilePoints = profiles[index];
+    const arcsForProfile = arcs.length ? arcs : [{ start: 0, end: TAU }];
+    const profileSegments = Math.max(96, thicknessOptions.weights.length * 24, 120);
+    const profileSpacing = Math.max(options.resolution * 0.25, 0.0005);
+    let previousProfilePoint: Vec2 | null = null;
+    for (let step = 0; step < profileSegments; step += 1) {
+      const angle = wrapAngle((step / profileSegments) * TAU);
+      if (
+        arcsForProfile.length &&
+        !arcsForProfile.some((arc) => angleInArc(angle, arc))
+      ) {
+        continue;
+      }
+      const radius = radiusForAngle(angle);
+      if (radius <= EPS) {
+        continue;
+      }
+      const point = toPointOnCircle(circle, angle, radius);
+      if (!allowAllAngles) {
+        const direction = sub(point, sample.position);
+        if (dot(direction, sample.normal) >= -EPS) {
+          continue;
+        }
+      }
+      if (
+        !previousProfilePoint ||
+        distance(previousProfilePoint, point) > profileSpacing
+      ) {
+        profilePoints.push(point);
+        previousProfilePoint = point;
+      }
+    }
+    if (profilePoints.length) {
+      appendToDenseLoop(profilePoints);
+    }
 
     const arcCandidates = arcs.filter((arc) => {
       const mid = wrapAngle(arc.start + (arc.end - arc.start) / 2);
@@ -641,7 +678,7 @@ const computeCircleEnvelope = (
     return denseLoop;
   })();
 
-  return { candidates, denseLoop: dense };
+  return { candidates, denseLoop: dense, profiles };
 };
 
 const deriveInnerGeometry = (
@@ -699,7 +736,7 @@ const deriveInnerGeometry = (
     }
 
     const context = prepareCircleEnvelope(samples, thicknessOptions);
-    const { candidates } = computeCircleEnvelope(
+    const { candidates, profiles } = computeCircleEnvelope(
       samples,
       fallbackInner,
       {
@@ -734,6 +771,14 @@ const deriveInnerGeometry = (
         bestPoints[index] = { x: point.x, y: point.y };
       }
     };
+
+    if (profiles.length === samples.length) {
+      profiles.forEach((anchors, index) => {
+        for (const point of anchors) {
+          tryUpdate(index, point);
+        }
+      });
+    }
 
     const projectTangent = (
       index: number,

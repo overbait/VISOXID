@@ -190,3 +190,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Open polylines subdivide each source segment into **300** uniform slices before recomputing normals so every hidden oxidation probe honours tiny compass spikes. Preserve this density (or justify an equivalent resolution) when tuning sampling.
 - Circle-envelope arc marching now uses a 10× finer spatial step (down to 0.0005 μm) and keeps dense-loop deduplication to 0.001 μm, ensuring dashed previews match highly detailed compass patterns without smoothing away protrusions.
 - Compass patches around dots and endpoints adopt the same tighter spacing floor (0.002 μm). If performance tweaks are necessary, profile before relaxing these tolerances and document any trade-offs.
+
+## 2025-10-30 — Radial profile anchors for oxidation
+- `computeCircleEnvelope` now samples a dense radial profile from every subdivision centre (including intermediate slices) and adds those spokes to the dense loop so compass spikes stop skipping the dashed contour.
+- Open polylines consume the returned profile anchors and promote any spoke that travels further along a slice’s inward normal before tangent refinement. Keep this in place so directional envelopes reflect every hidden oxidation probe.
