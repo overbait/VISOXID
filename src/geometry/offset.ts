@@ -126,3 +126,48 @@ export const resampleClosedPolygon = (polygon: Vec2[], count: number): Vec2[] =>
   }
   return samples;
 };
+
+export const resampleOpenPolyline = (polyline: Vec2[], count: number): Vec2[] => {
+  if (!polyline.length || count <= 0) return [];
+  if (count === 1) {
+    return [{ ...polyline[0] }];
+  }
+  if (polyline.length === 1) {
+    return Array.from({ length: count }, () => ({ ...polyline[0] }));
+  }
+
+  const segments: number[] = [];
+  let totalLength = 0;
+  for (let i = 0; i < polyline.length - 1; i += 1) {
+    const current = polyline[i];
+    const next = polyline[i + 1];
+    const len = distance(current, next);
+    segments.push(len);
+    totalLength += len;
+  }
+
+  if (totalLength === 0) {
+    return Array.from({ length: count }, (_, index) => ({ ...polyline[Math.min(index, polyline.length - 1)] }));
+  }
+
+  const samples: Vec2[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const fraction = i / (count - 1);
+    const target = fraction * totalLength;
+    let accumulated = 0;
+    for (let seg = 0; seg < segments.length; seg += 1) {
+      const segLength = segments[seg];
+      const nextAccum = accumulated + segLength;
+      if (target <= nextAccum || seg === segments.length - 1) {
+        const t = segLength === 0 ? 0 : (target - accumulated) / segLength;
+        const start = polyline[seg];
+        const end = polyline[seg + 1];
+        samples.push(lerp(start, end, Math.min(Math.max(t, 0), 1)));
+        break;
+      }
+      accumulated = nextAccum;
+    }
+  }
+
+  return samples;
+};

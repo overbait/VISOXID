@@ -7,7 +7,7 @@ This project implements **Oxid Designer**, a Vite + React + TypeScript workbench
 - The oxidation pipeline now derives the inner contour by first carving a uniform baseline offset with Clipper and then layering per-heading expansions along the outward normals.  Preserve this sequence inside `runGeometryPipeline()` so the oxide shell always honours the configured minimum thickness.
 - Canvas interactions must respect the active tool in state (`select`, `pen`, `edit`, `measure`, etc.).  Selections, node manipulation, and measurement overlays are driven from `CanvasViewport` using store actions.
 - Units inside the UI are **micrometres (μm)**.  Never reintroduce raw pixel units in UI strings or overlays.
-- The oxide preview is drawn inside the canvas renderer.  Do not remove the gradient fill between the external contour and the oxidised inner contour unless a spec change requires it.
+- The oxide preview is drawn inside the canvas renderer.  The ribbon gradient and dashed outer stroke were retired in favour of a single-line preview—don’t restore them unless a future spec calls for it.
 
 ## Documentation Discipline
 
@@ -31,7 +31,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Oxidation defaults and the active selection stay in lock-step.  Use `updateSelectedOxidation` when adjusting per-path values so the geometry pipeline re-runs and history snapshots remain consistent.
 - Segment toggling (line ↔︎ Bézier) is handled in the store via `toggleSegmentCurve`.  Any future editing affordances should reuse that action to keep mirrored/closed path invariants intact.
-- Path endpoints auto-close when they approach within ~4 μm and mirror snapping pins points to the configured axes—avoid bypassing `mergeEndpointsIfClose` or `applyMirrorSnapping` when mutating node arrays.
+- Path endpoints now stay open even when their distance falls below ~4 μm so designers can sketch tight U-turns without the contour snapping shut. Leave `mergeEndpointsIfClose` in place to keep this guard and continue to respect mirror snapping for axis alignment.
 - Inner oxidation silhouettes are now cleaned with Clipper before resampling; if you extend the offset logic, feed new contours back through `cleanAndSimplifyPolygons` so ribbons never self-intersect.
 - UI and models now clamp oxide inputs to ≤ 10 μm.  Preserve `MAX_THICKNESS_UM` when introducing new entry points or validation.
 
@@ -142,3 +142,25 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `computeCircleEnvelope` now evaluates arc radii directly from the compass polygon per heading instead of clamping to the sample’s own offset. Leave the min-distance enforcement in `deriveInnerGeometry` to guarantee the requested thickness instead of reintroducing local `Math.max` guards.
 - Dense arc sampling pushes every chosen candidate point into the `denseLoop` and bumps the minimum subdivisions to 12 so closed loops keep enough geometry to avoid collapsing when forms are sealed.
+
+## 2025-10-21 — Open-loop dense alignment & regression snapshot
+
+- `deriveInnerGeometry` now resamples open-path `denseLoop` results back to the sampled resolution before aligning with `alignLoop`. After alignment, immediately call `enforceMinimumOffset` so tangential drift still respects the configured oxide floor.
+- A helper `resampleOpenPolyline` lives beside `resampleClosedPolygon`. Reuse it when you need evenly spaced open-line samples.
+- Added `docs/regressions/asymmetric-open-oxidation.svg` as a quick visual check for asymmetric envelopes on open paths. Keep it updated whenever the open-loop offset behaviour changes.
+
+## 2025-10-22 — Single-sided replicated oxide contour
+
+- Open-path envelopes now replicate the global oxidation contour (40 angular samples) along each segment (10 placements per span), keeping only the most inward intersections per sample. Skip smoothing and do not reuse the arc-union fallback.
+- Only expose the innermost line of the oxide preview for open paths—`polygons` stay empty so the renderer no longer shades the ribbon.
+- Canvas rendering removed the gradient ribbon and dashed outer stroke; draw both contours as solid lines to match the single-sided spec.
+
+## 2025-10-23 — Local open-contour filtering & no auto-closing
+
+- When fanning contour copies along open segments, only consider candidates whose path parameter overlaps the sample’s neighbourhood so remote copies can’t tug the oxide inward from the opposite side of the trace.
+- Keep open paths from auto-snapping closed when their endpoints meet; designers must explicitly close loops elsewhere if needed.
+
+## 2025-10-24 — Tangential guard for replicated open envelopes
+
+- Open-path oxidation now rejects replicated contour hits whose sideways drift exceeds ~10 % of their inward travel (with a small absolute floor) before picking the innermost sample. This keeps the preview from folding back across corners when neighbouring segments overlap.
+- When comparing candidates with similar inward travel, prefer the one with the smaller tangential component so the resulting polyline hugs the expected side of the trace.
