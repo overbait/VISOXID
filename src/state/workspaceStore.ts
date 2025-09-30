@@ -189,17 +189,11 @@ const mergeEndpointsIfClose = (
     return { nodes, closed: alreadyClosed };
   }
   const first = nodes[0];
-  const lastIndex = nodes.length - 1;
-  const last = nodes[lastIndex];
+  const last = nodes[nodes.length - 1];
   if (distance(first.point, last.point) > ENDPOINT_MERGE_THRESHOLD) {
     return { nodes, closed: false };
   }
-  const mergedX = (first.point.x + last.point.x) / 2;
-  const mergedY = (first.point.y + last.point.y) / 2;
-  const mergedNodes = [...nodes];
-  mergedNodes[0] = shiftNode(first, mergedX, mergedY);
-  mergedNodes[lastIndex] = shiftNode(last, mergedX, mergedY);
-  return { nodes: mergedNodes, closed: true };
+  return { nodes, closed: false };
 };
 
 const applyMirrorSnapping = (nodes: PathNode[], mirror: WorkspaceState['mirror']): PathNode[] => {
@@ -622,7 +616,7 @@ const deriveInnerGeometry = (
     const inwardNormals = samples.map((sample) =>
       normalize({ x: -sample.normal.x, y: -sample.normal.y }),
     );
-    const candidatePoints: Vec2[] = [];
+    const candidatePoints: { point: Vec2; parameter: number }[] = [];
 
     for (let i = 0; i < samples.length - 1; i += 1) {
       const current = samples[i];
@@ -644,7 +638,10 @@ const deriveInnerGeometry = (
 
         for (const offset of contourOffsets) {
           if (dot(offset, blendedInward) <= 0) continue;
-          candidatePoints.push({ x: center.x + offset.x, y: center.y + offset.y });
+          candidatePoints.push({
+            point: { x: center.x + offset.x, y: center.y + offset.y },
+            parameter: lerp(current.parameter, next.parameter, t),
+          });
         }
       }
     }
@@ -662,13 +659,24 @@ const deriveInnerGeometry = (
         continue;
       }
       const origin = sample.position;
+      const minParameter =
+        i === 0
+          ? 0
+          : (samples[i - 1].parameter + sample.parameter) / 2;
+      const maxParameter =
+        i === samples.length - 1
+          ? 1
+          : (sample.parameter + samples[i + 1].parameter) / 2;
       let bestProjection = dot(sub(bestBySample[i], origin), inward);
 
       for (const candidate of candidatePoints) {
-        const projection = dot(sub(candidate, origin), inward);
+        if (candidate.parameter + EPS < minParameter || candidate.parameter - EPS > maxParameter) {
+          continue;
+        }
+        const projection = dot(sub(candidate.point, origin), inward);
         if (projection > bestProjection) {
           bestProjection = projection;
-          bestBySample[i] = candidate;
+          bestBySample[i] = candidate.point;
         }
       }
     }

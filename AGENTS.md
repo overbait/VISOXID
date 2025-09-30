@@ -31,7 +31,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - Oxidation defaults and the active selection stay in lock-step.  Use `updateSelectedOxidation` when adjusting per-path values so the geometry pipeline re-runs and history snapshots remain consistent.
 - Segment toggling (line ↔︎ Bézier) is handled in the store via `toggleSegmentCurve`.  Any future editing affordances should reuse that action to keep mirrored/closed path invariants intact.
-- Path endpoints auto-close when they approach within ~4 μm and mirror snapping pins points to the configured axes—avoid bypassing `mergeEndpointsIfClose` or `applyMirrorSnapping` when mutating node arrays.
+- Path endpoints now stay open even when their distance falls below ~4 μm so designers can sketch tight U-turns without the contour snapping shut. Leave `mergeEndpointsIfClose` in place to keep this guard and continue to respect mirror snapping for axis alignment.
 - Inner oxidation silhouettes are now cleaned with Clipper before resampling; if you extend the offset logic, feed new contours back through `cleanAndSimplifyPolygons` so ribbons never self-intersect.
 - UI and models now clamp oxide inputs to ≤ 10 μm.  Preserve `MAX_THICKNESS_UM` when introducing new entry points or validation.
 
@@ -154,3 +154,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Open-path envelopes now replicate the global oxidation contour (40 angular samples) along each segment (10 placements per span), keeping only the most inward intersections per sample. Skip smoothing and do not reuse the arc-union fallback.
 - Only expose the innermost line of the oxide preview for open paths—`polygons` stay empty so the renderer no longer shades the ribbon.
 - Canvas rendering removed the gradient ribbon and dashed outer stroke; draw both contours as solid lines to match the single-sided spec.
+
+## 2025-10-23 — Local open-contour filtering & no auto-closing
+
+- When fanning contour copies along open segments, only consider candidates whose path parameter overlaps the sample’s neighbourhood so remote copies can’t tug the oxide inward from the opposite side of the trace.
+- Keep open paths from auto-snapping closed when their endpoints meet; designers must explicitly close loops elsewhere if needed.
