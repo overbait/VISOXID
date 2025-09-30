@@ -170,3 +170,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Open paths subdivide every segment into **30** uniform slices before recomputing normals to stabilise per-point compass weights. Keep this density so edge weights stay faithful to the compass profile.
 - The demo scene bootstrap flips the `bootstrapped` flag before inserting default geometry, preventing StrictMode from spawning duplicate reference circles. Avoid reordering this guard or the initial scene may double-load.
 - Follow-up task: derive a tangential hull for open segments by sampling ~30 compass-driven oxidation anchors per span and tracing the furthest tangent envelope (see the latest QA screenshot). Document progress in this handbook once implemented.
+
+## 2025-10-26 — Open-line tangent envelope
+
+- Open polylines now reuse a shared compass-envelope context and evaluate tangents between every pair of neighbouring subdivision samples (30 per source segment) to pick the furthest inward oxidation anchor per slice. Keep this evaluation when tuning the pipeline so directional spokes bend the entire span, not just the endpoints.
+- Tangent comparisons stay local to a segment—continue to respect `segmentIndex` boundaries so adjacent spans do not merge their oxidation hulls implicitly.
+- The selected tangent anchors still pass through `enforceMinimumOffset`; do not bypass this clamp or the contour can recede past the requested compass thickness.

@@ -239,6 +239,32 @@ interface Circle {
   normal: Vec2;
 }
 
+interface CircleEnvelopeContext {
+  circles: Circle[];
+  inwardAngles: number[];
+  radiusForAngle: (angle: number) => number;
+}
+
+const prepareCircleEnvelope = (
+  samples: SamplePoint[],
+  thicknessOptions: ThicknessOptions,
+): CircleEnvelopeContext => {
+  const inwardAngles: number[] = [];
+  const radiusForAngle = (angle: number): number =>
+    Math.max(evalThicknessForAngle(wrapAngle(angle), thicknessOptions), 0);
+  const circles = samples.map((sample) => {
+    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
+    inwardAngles.push(inwardAngle);
+    const baselineRadius = radiusForAngle(inwardAngle);
+    return {
+      center: sample.position,
+      radius: baselineRadius,
+      normal: sample.normal,
+    };
+  });
+  return { circles, inwardAngles, radiusForAngle };
+};
+
 const wrapAngle = (angle: number): number => {
   let wrapped = angle % TAU;
   if (wrapped < 0) {
@@ -357,6 +383,50 @@ const computeOcclusionIntervals = (a: Circle, b: Circle): Arc[] => {
   return normaliseInterval(angleToB - phi, angleToB + phi);
 };
 
+const computeCircleTangents = (a: Circle, b: Circle): { a: Vec2; b: Vec2 }[] => {
+  const result: { a: Vec2; b: Vec2 }[] = [];
+  const dx = b.center.x - a.center.x;
+  const dy = b.center.y - a.center.y;
+  const d2 = dx * dx + dy * dy;
+  if (d2 <= EPS * EPS) {
+    return result;
+  }
+
+  const resolveTangents = (inner: boolean): void => {
+    const r1 = a.radius;
+    let r2 = b.radius;
+    if (inner) {
+      r2 = -r2;
+    }
+    const dr = r1 - r2;
+    const h2 = d2 - dr * dr;
+    if (h2 < -EPS) {
+      return;
+    }
+    const h = Math.sqrt(Math.max(0, h2));
+    for (const sign of [-1, 1]) {
+      const vx = (dx * dr - dy * h * sign) / d2;
+      const vy = (dy * dr + dx * h * sign) / d2;
+      result.push({
+        a: {
+          x: a.center.x + vx * r1,
+          y: a.center.y + vy * r1,
+        },
+        b: {
+          x: b.center.x + vx * r2,
+          y: b.center.y + vy * r2,
+        },
+      });
+    }
+  };
+
+  resolveTangents(false);
+  return result;
+};
+
+const inwardDistanceAlongNormal = (sample: SamplePoint, point: Vec2): number =>
+  -dot(sub(point, sample.position), sample.normal);
+
 const orientation = (a: Vec2, b: Vec2, c: Vec2): number =>
   (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 
@@ -399,22 +469,10 @@ const computeCircleEnvelope = (
   fallbackInner: Vec2[],
   options: EnvelopeOptions,
   thicknessOptions: ThicknessOptions,
+  context?: CircleEnvelopeContext,
 ): { candidates: Vec2[]; denseLoop: Vec2[] } => {
-  const inwardAngles: number[] = [];
-
-  const radiusForAngle = (angle: number): number =>
-    Math.max(evalThicknessForAngle(wrapAngle(angle), thicknessOptions), 0);
-
-  const circles: Circle[] = samples.map((sample) => {
-    const inwardAngle = wrapAngle(Math.atan2(-sample.normal.y, -sample.normal.x));
-    inwardAngles.push(inwardAngle);
-    const baselineRadius = radiusForAngle(inwardAngle);
-    return {
-      center: sample.position,
-      radius: baselineRadius,
-      normal: sample.normal,
-    };
-  });
+  const { circles, inwardAngles, radiusForAngle } =
+    context ?? prepareCircleEnvelope(samples, thicknessOptions);
 
   const denseLoop: Vec2[] = [];
 
@@ -616,6 +674,7 @@ const deriveInnerGeometry = (
       return { innerSamples: [], polygons: [] };
     }
 
+    const context = prepareCircleEnvelope(samples, thicknessOptions);
     const { candidates } = computeCircleEnvelope(
       samples,
       fallbackInner,
@@ -626,9 +685,72 @@ const deriveInnerGeometry = (
         allowCrossSegmentOcclusion: false,
       },
       thicknessOptions,
+      context,
     );
 
-    const enforced = enforceMinimumOffset(candidates);
+    const bestPoints = candidates.map((candidate, index) => {
+      const base = candidate ?? fallbackInner[index];
+      return { x: base.x, y: base.y };
+    });
+    const bestDistances = bestPoints.map((point, index) => {
+      const distance = inwardDistanceAlongNormal(samples[index], point);
+      if (!Number.isFinite(distance) || distance <= 0) {
+        return 0;
+      }
+      return distance;
+    });
+
+    const tryUpdate = (index: number, point: Vec2): void => {
+      const inward = inwardDistanceAlongNormal(samples[index], point);
+      if (!Number.isFinite(inward) || inward <= 0) {
+        return;
+      }
+      if (inward > bestDistances[index] + 1e-5) {
+        bestDistances[index] = inward;
+        bestPoints[index] = { x: point.x, y: point.y };
+      }
+    };
+
+    for (let i = 0; i < samples.length - 1; i += 1) {
+      const current = samples[i];
+      const next = samples[i + 1];
+      if (current.segmentIndex !== next.segmentIndex) {
+        continue;
+      }
+
+      const tangents = computeCircleTangents(context.circles[i], context.circles[i + 1]);
+      for (const tangent of tangents) {
+        const { a: tangentA, b: tangentB } = tangent;
+
+        const angleA = Math.atan2(
+          tangentA.y - context.circles[i].center.y,
+          tangentA.x - context.circles[i].center.x,
+        );
+        const angleB = Math.atan2(
+          tangentB.y - context.circles[i + 1].center.y,
+          tangentB.x - context.circles[i + 1].center.x,
+        );
+
+        const radiusA = context.radiusForAngle(angleA);
+        const radiusB = context.radiusForAngle(angleB);
+
+        if (radiusA > EPS) {
+          const refinedA = toPointOnCircle(context.circles[i], angleA, radiusA);
+          if (dot(sub(refinedA, current.position), current.normal) < -EPS) {
+            tryUpdate(i, refinedA);
+          }
+        }
+
+        if (radiusB > EPS) {
+          const refinedB = toPointOnCircle(context.circles[i + 1], angleB, radiusB);
+          if (dot(sub(refinedB, next.position), next.normal) < -EPS) {
+            tryUpdate(i + 1, refinedB);
+          }
+        }
+      }
+    }
+
+    const enforced = enforceMinimumOffset(bestPoints);
     const endpointPolygons = [samples[0], samples.at(-1)!]
       .map((sample) => sampleCompassPatch(sample.position, thicknessOptions, resolution))
       .filter((loop) => loop.length >= 3);
