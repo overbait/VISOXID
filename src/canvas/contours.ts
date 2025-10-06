@@ -1,4 +1,4 @@
-import type { MirrorSettings, PathEntity, SamplePoint, Vec2 } from '../types';
+import type { DirectionWeight, MirrorSettings, PathEntity, SamplePoint, Vec2 } from '../types';
 import { evalThicknessForAngle } from '../geometry';
 import { distance } from '../utils/math';
 import { worldToCanvas, type ViewTransform } from './viewTransform';
@@ -98,7 +98,7 @@ const LENGTH_EPS = 1e-6;
 
 const computeDotPolygon = (options: {
   uniformThickness: number;
-  weights: Array<{ angleDeg: number; valueUm: number }>;
+  weights: DirectionWeight[];
   mirrorSymmetry: boolean;
   progress: number;
 }): Vec2[] => {

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type CSSProperties } from 'react';
 import { CanvasViewport } from './ui/CanvasViewport';
 import { DirectionalCompass } from './ui/DirectionalCompass';
 import { ToolPanel } from './ui/ToolPanel';
@@ -20,6 +20,15 @@ export const App = () => {
   const pathCount = useWorkspaceStore((state) => state.paths.length);
   const bootstrapped = useWorkspaceStore((state) => state.bootstrapped);
   const markBootstrapped = useWorkspaceStore((state) => state.markBootstrapped);
+  const panelCollapse = useWorkspaceStore((state) => state.panelCollapse);
+
+  const rightColumnWidth = panelCollapse.oxidation && panelCollapse.grid
+    ? '200px'
+    : panelCollapse.oxidation || panelCollapse.grid
+      ? '260px'
+      : '320px';
+
+  const gridStyle = { ['--right-column' as const]: rightColumnWidth } as CSSProperties;
 
   useEffect(() => {
     if (!bootstrapped && pathCount === 0) {
@@ -49,7 +58,10 @@ export const App = () => {
             <p className="text-sm text-muted">Oxidation-aware contour planning with live measurement feedback.</p>
           </div>
         </header>
-        <main className="grid grid-cols-1 gap-6 xl:grid-cols-[280px_minmax(0,1fr)_320px]">
+        <main
+          className="grid grid-cols-1 gap-6 xl:[grid-template-columns:280px_minmax(0,1fr)_var(--right-column,320px)]"
+          style={gridStyle}
+        >
           <div className="flex flex-col gap-4">
             <DirectionalCompass />
             <ToolPanel />

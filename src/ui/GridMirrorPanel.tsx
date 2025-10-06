@@ -5,75 +5,90 @@ export const GridMirrorPanel = () => {
   const mirror = useWorkspaceStore((state) => state.mirror);
   const updateGrid = useWorkspaceStore((state) => state.updateGrid);
   const updateMirror = useWorkspaceStore((state) => state.updateMirror);
+  const collapsed = useWorkspaceStore((state) => state.panelCollapse.grid);
+  const setPanelCollapsed = useWorkspaceStore((state) => state.setPanelCollapsed);
 
   return (
-    <div className="panel flex flex-col gap-4 p-4">
-      <div className="section-title">Grid</div>
-      <div className="flex flex-col gap-3 text-xs text-muted">
-        <ToggleRow
-          label="Visible"
-          checked={grid.visible}
-          onChange={(value) => updateGrid({ visible: value })}
-        />
-        <ToggleRow
-          label="Snap to grid"
-          checked={grid.snapToGrid}
-          onChange={(value) => updateGrid({ snapToGrid: value })}
-        />
-        <NumberField
-          label="Spacing"
-          value={grid.spacing}
-          min={4}
-          max={256}
-          onChange={(value) => updateGrid({ spacing: value })}
-        />
-        <NumberField
-          label="Subdivisions"
-          value={grid.subdivisions}
-          min={1}
-          max={16}
-          onChange={(value) => updateGrid({ subdivisions: value })}
-        />
+    <div className="panel flex flex-col gap-3 p-4">
+      <div className="flex items-center justify-between">
+        <div className="section-title">Grid</div>
+        <button
+          type="button"
+          className="text-[11px] font-semibold text-accent transition hover:text-accent/80"
+          onClick={() => setPanelCollapsed('grid', !collapsed)}
+        >
+          {collapsed ? 'Expand' : 'Collapse'}
+        </button>
       </div>
-      <div className="section-title">Mirror</div>
-      <div className="flex flex-col gap-3 text-xs text-muted">
-        <ToggleRow
-          label="Enabled"
-          checked={mirror.enabled}
-          onChange={(value) => updateMirror({ enabled: value })}
-        />
-        <label className="input-label flex items-center justify-between">
-          Axis
-          <select
-            value={mirror.axis}
-            onChange={(event) => updateMirror({ axis: event.target.value as typeof mirror.axis })}
-            className="input-field ml-3 w-28"
-          >
-            <option value="x">X</option>
-            <option value="y">Y</option>
-            <option value="xy">Both</option>
-          </select>
-        </label>
-        <NumberField
-          label="Origin X"
-          value={mirror.origin.x}
-          min={-4096}
-          max={4096}
-          onChange={(value) => updateMirror({ origin: { ...mirror.origin, x: value } })}
-        />
-        <NumberField
-          label="Origin Y"
-          value={mirror.origin.y}
-          min={-4096}
-          max={4096}
-          onChange={(value) => updateMirror({ origin: { ...mirror.origin, y: value } })}
-        />
-        <ToggleRow
-          label="Live preview"
-          checked={mirror.livePreview}
-          onChange={(value) => updateMirror({ livePreview: value })}
-        />
-      </div>
+      {!collapsed && (
+        <>
+          <div className="flex flex-col gap-3 text-xs text-muted">
+            <ToggleRow
+              label="Visible"
+              checked={grid.visible}
+              onChange={(value) => updateGrid({ visible: value })}
+            />
+            <ToggleRow
+              label="Snap to grid"
+              checked={grid.snapToGrid}
+              onChange={(value) => updateGrid({ snapToGrid: value })}
+            />
+            <NumberField
+              label="Spacing"
+              value={grid.spacing}
+              min={4}
+              max={256}
+              onChange={(value) => updateGrid({ spacing: value })}
+            />
+            <NumberField
+              label="Subdivisions"
+              value={grid.subdivisions}
+              min={1}
+              max={16}
+              onChange={(value) => updateGrid({ subdivisions: value })}
+            />
+          </div>
+          <div className="section-title">Mirror</div>
+          <div className="flex flex-col gap-3 text-xs text-muted">
+            <ToggleRow
+              label="Enabled"
+              checked={mirror.enabled}
+              onChange={(value) => updateMirror({ enabled: value })}
+            />
+            <label className="input-label flex items-center justify-between">
+              Axis
+              <select
+                value={mirror.axis}
+                onChange={(event) => updateMirror({ axis: event.target.value as typeof mirror.axis })}
+                className="input-field ml-3 w-28"
+              >
+                <option value="x">X</option>
+                <option value="y">Y</option>
+                <option value="xy">Both</option>
+              </select>
+            </label>
+            <NumberField
+              label="Origin X"
+              value={mirror.origin.x}
+              min={-4096}
+              max={4096}
+              onChange={(value) => updateMirror({ origin: { ...mirror.origin, x: value } })}
+            />
+            <NumberField
+              label="Origin Y"
+              value={mirror.origin.y}
+              min={-4096}
+              max={4096}
+              onChange={(value) => updateMirror({ origin: { ...mirror.origin, y: value } })}
+            />
+            <ToggleRow
+              label="Live preview"
+              checked={mirror.livePreview}
+              onChange={(value) => updateMirror({ livePreview: value })}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 };

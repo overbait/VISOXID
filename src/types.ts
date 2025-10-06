@@ -1,11 +1,4 @@
-export type ToolId =
-  | 'select'
-  | 'line'
-  | 'dot'
-  | 'measure'
-  | 'oxidize'
-  | 'pan'
-  | 'erase';
+export type ToolId = 'select' | 'line' | 'dot' | 'measure' | 'pan' | 'erase';
 
 export interface Vec2 {
   x: number;
@@ -114,6 +107,11 @@ export interface MeasurementState {
   showHeatmap: boolean;
 }
 
+export interface PanelCollapseState {
+  oxidation: boolean;
+  grid: boolean;
+}
+
 export interface NodeSelection {
   pathId: string;
   nodeIds: string[];
@@ -142,6 +140,8 @@ export interface WorkspaceSnapshot {
   oxidationProgress: number;
   oxidationDotCount: number;
   zoom: number;
+  pan: Vec2;
+  panelCollapse: PanelCollapseState;
 }
 
 export interface WorkspaceState {
@@ -149,6 +149,7 @@ export interface WorkspaceState {
   selectedPathIds: string[];
   nodeSelection: NodeSelection | null;
   activeTool: ToolId;
+  pan: Vec2;
   grid: GridSettings;
   mirror: MirrorSettings;
   oxidationDefaults: OxidationSettings;
@@ -164,6 +165,7 @@ export interface WorkspaceState {
   bootstrapped: boolean;
   library: StoredShape[];
   zoom: number;
+  panelCollapse: PanelCollapseState;
 }
 
 export interface ExportedProject {

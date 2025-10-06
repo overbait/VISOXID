@@ -10,6 +10,8 @@ export const OxidationPanel = () => {
   const toggleVisible = useWorkspaceStore((state) => state.toggleOxidationVisible);
   const dotCount = useWorkspaceStore((state) => state.oxidationDotCount);
   const setDotCount = useWorkspaceStore((state) => state.setOxidationDotCount);
+  const collapsed = useWorkspaceStore((state) => state.panelCollapse.oxidation);
+  const setPanelCollapsed = useWorkspaceStore((state) => state.setPanelCollapsed);
   const active = defaults;
 
   const directionValues = useMemo(
@@ -33,64 +35,73 @@ export const OxidationPanel = () => {
   );
 
   return (
-    <div className="panel flex flex-col gap-4 p-4">
-      <div className="section-title">Oxidation</div>
-      <label className="flex items-center justify-between text-xs font-medium text-muted">
-        <span>Show compass dots</span>
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
-          checked={oxidationVisible}
-          onChange={(event) => toggleVisible(event.target.checked)}
-        />
-      </label>
-      <div className="grid grid-cols-3 gap-3 text-xs text-muted">
-        {preview.map((item) => (
-          <div key={item.label} className="rounded-xl bg-accentSoft/60 px-3 py-2 text-center text-[11px]">
-            <div className="font-semibold text-text">{item.value}</div>
-            <div>{item.label}</div>
+    <div className="panel flex flex-col gap-3 p-4">
+      <div className="flex items-center justify-between">
+        <div className="section-title">Oxidation</div>
+        <button
+          type="button"
+          className="text-[11px] font-semibold text-accent transition hover:text-accent/80"
+          onClick={() => setPanelCollapsed('oxidation', !collapsed)}
+        >
+          {collapsed ? 'Expand' : 'Collapse'}
+        </button>
+      </div>
+      {!collapsed && (
+        <>
+          <label className="flex items-center justify-between text-xs font-medium text-muted">
+            <span>Show compass dots</span>
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+              checked={oxidationVisible}
+              onChange={(event) => toggleVisible(event.target.checked)}
+            />
+          </label>
+          <div className="grid grid-cols-3 gap-3 text-xs text-muted">
+            {preview.map((item) => (
+              <div key={item.label} className="rounded-xl bg-accentSoft/60 px-3 py-2 text-center text-[11px]">
+                <div className="font-semibold text-text">{item.value}</div>
+                <div>{item.label}</div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      <div className="flex flex-col gap-3 text-sm">
-        <LabeledSlider
-          label="Uniform thickness"
-          min={0}
-          max={10}
-          step={0.1}
-          value={active.thicknessUniformUm}
-          onChange={(value) => {
-            const clamped = Math.min(10, Math.max(0, value));
-            updateDefaults({ thicknessUniformUm: clamped });
-          }}
-        />
-        <LabeledSlider
-          label="Line preview dots"
-          min={0}
-          max={1000}
-          step={1}
-          value={dotCount}
-          onChange={(value) => {
-            setDotCount(value);
-          }}
-          format={(value) => Math.round(value).toString()}
-        />
-      </div>
-      <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs text-muted">
-        Use the compass card on the left to add, remove, or edit directional μm offsets. Toggle the chain icon there to choose
-        whether neighbouring headings adapt automatically.
-      </div>
-      <label className="flex items-center gap-2 text-xs font-medium text-muted">
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
-          checked={active.mirrorSymmetry}
-          onChange={(event) => {
-            updateDefaults({ mirrorSymmetry: event.target.checked });
-          }}
-        />
-        Mirror symmetry
-      </label>
+          <div className="flex flex-col gap-3 text-sm">
+            <LabeledSlider
+              label="Uniform thickness"
+              min={0}
+              max={10}
+              step={0.1}
+              value={active.thicknessUniformUm}
+              onChange={(value) => {
+                const clamped = Math.min(10, Math.max(0, value));
+                updateDefaults({ thicknessUniformUm: clamped });
+              }}
+            />
+            <LabeledSlider
+              label="Line preview dots"
+              min={0}
+              max={1000}
+              step={1}
+              value={dotCount}
+              onChange={(value) => {
+                setDotCount(value);
+              }}
+              format={(value) => Math.round(value).toString()}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-muted">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
+              checked={active.mirrorSymmetry}
+              onChange={(event) => {
+                updateDefaults({ mirrorSymmetry: event.target.checked });
+              }}
+            />
+            Mirror symmetry
+          </label>
+        </>
+      )}
     </div>
   );
 };

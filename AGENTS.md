@@ -162,3 +162,11 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - The canvas no longer renders the oxide ribbon or dashed inner contour; `drawContours` now only strokes the outer path with a solid line. Keep it this way so the preview stays focused on per-point dots.
 - Line oxidation is visualised through `drawOxidationDots`, which drops translated compass patches along each sampled slice. Respect `oxidationDotCount` and the `oxidationVisible` flag when adjusting this overlay.
 - The Oxidation panel exposes a “Line preview dots” slider (0–1000). When touching the store, continue to clamp values via `clampDotCount` so undo/redo snapshots remain consistent.
+
+## 2025-11-04 — Canvas pan, collapsible panels & duplication
+
+- Workspace view state now tracks a `pan` vector alongside `zoom`. Use `panBy`/`setPan` when implementing navigation controls and always pass the active pan into `computeViewTransform` so hit-tests and rendering remain aligned.
+- The right-hand Oxidation and Grid panels expose collapse toggles driven by `panelCollapse`. Update layout logic via `setPanelCollapsed` when adding new side panels and preserve the CSS variable `--right-column` that App.tsx sets for responsive widths.
+- Dragging with the Select tool translates whole paths via `translatePaths`. The helper skips locked paths and records history—reuse it for future bulk transforms instead of reimplementing per-path loops.
+- The Tool panel now offers a Copy action (`duplicateSelectedPaths`, also bound to ⌘/Ctrl+D) that clones the current selection in-place. When introducing new selection tools, make sure they update `selectedPathIds` so duplication remains accurate.
+- Measurement drags are unconstrained ruler reads; probes store real endpoint coordinates instead of snapping to oxidation thickness. Hover measurements still sample the oxidation profile—preserve both modes when refining overlays.

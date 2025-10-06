@@ -6,7 +6,6 @@ const tools: Array<{ id: ToolId; label: string; shortcut: string }> = [
   { id: 'select', label: 'Select', shortcut: 'V' },
   { id: 'line', label: 'Line', shortcut: 'L' },
   { id: 'dot', label: 'Dot', shortcut: 'D' },
-  { id: 'oxidize', label: 'Oxidize', shortcut: 'O' },
   { id: 'measure', label: 'Measure', shortcut: 'M' },
   { id: 'pan', label: 'Pan', shortcut: 'Space' },
 ];
@@ -14,6 +13,8 @@ const tools: Array<{ id: ToolId; label: string; shortcut: string }> = [
 export const ToolPanel = () => {
   const activeTool = useWorkspaceStore((state) => state.activeTool);
   const setActiveTool = useWorkspaceStore((state) => state.setActiveTool);
+  const duplicateSelectedPaths = useWorkspaceStore((state) => state.duplicateSelectedPaths);
+  const hasSelection = useWorkspaceStore((state) => state.selectedPathIds.length > 0);
 
   return (
     <div className="panel flex flex-col gap-3 p-4">
@@ -31,6 +32,15 @@ export const ToolPanel = () => {
           </button>
         ))}
       </div>
+      <button
+        type="button"
+        className="toolbar-button"
+        onClick={() => duplicateSelectedPaths()}
+        disabled={!hasSelection}
+      >
+        <span>Copy selection</span>
+        <span className="text-[10px] text-muted">⌘D</span>
+      </button>
     </div>
   );
 };

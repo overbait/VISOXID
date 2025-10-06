@@ -6,7 +6,6 @@ const keyMap: Record<string, ToolId> = {
   v: 'select',
   l: 'line',
   d: 'dot',
-  o: 'oxidize',
   m: 'measure',
 };
 
@@ -15,6 +14,7 @@ export const useKeyboardShortcuts = () => {
   const undo = useWorkspaceStore((state) => state.undo);
   const redo = useWorkspaceStore((state) => state.redo);
   const deleteSelectedNodes = useWorkspaceStore((state) => state.deleteSelectedNodes);
+  const duplicateSelectedPaths = useWorkspaceStore((state) => state.duplicateSelectedPaths);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -29,6 +29,11 @@ export const useKeyboardShortcuts = () => {
         } else {
           undo();
         }
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && key === 'd') {
+        event.preventDefault();
+        duplicateSelectedPaths();
         return;
       }
       if (key in keyMap) {
@@ -46,5 +51,5 @@ export const useKeyboardShortcuts = () => {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [deleteSelectedNodes, redo, setActiveTool, undo]);
+  }, [deleteSelectedNodes, duplicateSelectedPaths, redo, setActiveTool, undo]);
 };

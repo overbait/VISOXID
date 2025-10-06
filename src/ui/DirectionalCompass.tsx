@@ -515,10 +515,6 @@ export const DirectionalCompass = () => {
             <div className="pointer-events-none absolute inset-0 rounded-full border-2 border-dashed border-accent/40" />
           )}
         </div>
-        <div className="text-center text-[11px] text-muted">
-          Click a spoke to adjust its μm offset below. Enable the chain to move every heading together. Toggle the plus icon
-          and click the outer rim to add a new heading.
-        </div>
       </div>
       <div className="rounded-2xl border border-border/70 bg-white/80 p-4">
         {selectedWeight ? (
