@@ -82,20 +82,22 @@ export class CanvasRenderer {
 
     state.paths.forEach((path) => {
       const selected = state.selectedPathIds.includes(path.meta.id);
-      if (showHeatmap) {
+      if (showHeatmap && path.meta.kind !== 'reference') {
         drawHeatmap(this.ctx, path, view);
       }
       drawContours(this.ctx, path, selected, view, state.mirror);
-      drawOxidationDots(
-        this.ctx,
-        path,
-        selected,
-        dotCount,
-        progress,
-        view,
-        state.mirror,
-        showDots,
-      );
+      if (path.meta.kind !== 'reference') {
+        drawOxidationDots(
+          this.ctx,
+          path,
+          selected,
+          dotCount,
+          progress,
+          view,
+          state.mirror,
+          showDots,
+        );
+      }
       drawHandles(this.ctx, path, selected, view, state.nodeSelection);
     });
     drawSnaps(this.ctx, state.paths, state.measurements, view);

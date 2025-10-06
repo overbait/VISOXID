@@ -1,5 +1,7 @@
 export type ToolId = 'select' | 'line' | 'dot' | 'measure' | 'pan' | 'erase';
 
+export type PathKind = 'oxided' | 'reference';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -32,6 +34,7 @@ export interface PathMeta {
   visible: boolean;
   locked: boolean;
   color: string;
+  kind: PathKind;
   createdAt: number;
   updatedAt: number;
 }
@@ -71,6 +74,33 @@ export interface StoredShape {
   name: string;
   nodes: PathNode[];
   oxidation: OxidationSettings;
+  pathType: PathKind;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface StoredSceneState {
+  paths: PathEntity[];
+  selectedPathIds: string[];
+  nodeSelection: NodeSelection | null;
+  activeTool: ToolId;
+  pan: Vec2;
+  zoom: number;
+  grid: GridSettings;
+  mirror: MirrorSettings;
+  oxidationDefaults: OxidationSettings;
+  measurements: MeasurementState;
+  oxidationVisible: boolean;
+  oxidationProgress: number;
+  oxidationDotCount: number;
+  directionalLinking: boolean;
+  panelCollapse: PanelCollapseState;
+}
+
+export interface StoredScene {
+  id: string;
+  name: string;
+  state: StoredSceneState;
   createdAt: number;
   updatedAt: number;
 }
@@ -163,6 +193,7 @@ export interface WorkspaceState {
   directionalLinking: boolean;
   bootstrapped: boolean;
   library: StoredShape[];
+  scenes: StoredScene[];
   zoom: number;
   panelCollapse: PanelCollapseState;
 }

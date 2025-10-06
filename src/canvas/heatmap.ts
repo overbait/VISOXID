@@ -12,6 +12,7 @@ export const drawHeatmap = (
   path: PathEntity,
   view: ViewTransform,
 ): void => {
+  if (path.meta.kind === 'reference') return;
   const samples = path.sampled?.samples;
   if (!samples?.length) return;
   const values = samples.map((sample) => sample.thickness);

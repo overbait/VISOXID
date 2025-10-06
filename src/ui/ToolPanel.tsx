@@ -14,7 +14,9 @@ export const ToolPanel = () => {
   const activeTool = useWorkspaceStore((state) => state.activeTool);
   const setActiveTool = useWorkspaceStore((state) => state.setActiveTool);
   const duplicateSelectedPaths = useWorkspaceStore((state) => state.duplicateSelectedPaths);
-  const hasSelection = useWorkspaceStore((state) => state.selectedPathIds.length > 0);
+  const selectedPathIds = useWorkspaceStore((state) => state.selectedPathIds);
+
+  const hasSelection = selectedPathIds.length > 0;
 
   return (
     <div className="panel flex flex-col gap-3 p-4">
@@ -31,16 +33,16 @@ export const ToolPanel = () => {
             <span className="text-[10px] text-muted">{tool.shortcut}</span>
           </button>
         ))}
+        <button
+          type="button"
+          className="toolbar-button"
+          onClick={() => duplicateSelectedPaths()}
+          disabled={!hasSelection}
+        >
+          <span>Copy</span>
+          <span className="text-[10px] text-muted">⌘D</span>
+        </button>
       </div>
-      <button
-        type="button"
-        className="toolbar-button"
-        onClick={() => duplicateSelectedPaths()}
-        disabled={!hasSelection}
-      >
-        <span>Copy selection</span>
-        <span className="text-[10px] text-muted">⌘D</span>
-      </button>
     </div>
   );
 };

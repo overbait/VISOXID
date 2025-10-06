@@ -183,3 +183,26 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Legacy snapshots may still carry `panelCollapse.oxidation/grid`; reuse `normalizePanelCollapse` when touching history/import logic so they migrate cleanly.
 - The compass inspector swaps the old helper text for an “Export PNG” button that currently fires an info toast via `pushWarning`. Wire the actual export routine through this button in future changes.
 - App bootstrap now guards the demo circle seeding with a ref so StrictMode’s double effects don’t spawn duplicate geometry. Keep this sentinel in place if you refactor startup flows.
+
+## 2025-11-07 — DXF interchange & reference geometry mode
+
+- Paths now carry a `meta.kind` (`'oxided'` | `'reference'`). Reference paths act as grey, non-oxidised guides: no dots, no thickness evaluation, and no per-node editing. Use `setPathType` to flip modes so undo/redo and geometry recomputation stay in sync.
+- Canvas hit-tests skip reference paths for node/segment edits and handles never render for them. They can still be translated as a whole via `translatePaths`.
+- `runGeometryPipeline` zeros thickness/inner geometry for reference paths. If you create new entry points, make sure reference mode routes through this same guard before invoking the offset solver.
+- DXF import/export lives under `src/utils/dxf.ts`. The importer supports `LINE` and `LWPOLYLINE` entities, recentres everything to the 50 μm workspace, and maps the `REFERENCE` layer to the reference path kind. Keep exports using those same layers so round-trips remain lossless.
+
+## 2025-11-08 — Tool selector memoisation guard
+
+- Components should never subscribe to Zustand selectors that build new arrays or objects on every render; doing so trips React’s external-store guard and bricks the UI with an infinite update loop. Derive filtered selections with `useMemo` (fed by stable store slices) or provide a comparator when you need structural equality.
+
+## 2025-11-09 — Path kind inspector & DXF arc sampling
+
+- The path type selector now lives on the right rail beneath the Oxidation card. Keep its mixed-selection banner and reuse `setPathType` so undo/redo and the geometry pipeline stay consistent when flipping modes.
+- DXF import now approximates `ARC` and `CIRCLE` entities into polylines (64 segments for a full circle). Preserve this conversion so guides from AutoCAD round-trip without manual edits, and keep centring the result in the 50 μm workspace before adding paths.
+- The canvas centre column no longer hard-limits its width when the sidebar is expanded, ensuring the gap matches the left rail, and zoom tops out at ×4. Honour these bounds when adjusting layout or viewport behaviour.
+
+## 2025-11-10 — Scene snapshots & DXF curve preservation
+
+- Workspace state now persists complete scene snapshots in `scenes`. Use `saveSceneToLibrary`/`loadSceneFromLibrary` for library interactions, and update `captureSceneState` plus the persistence helpers when adding new top-level store fields so saved scenes stay lossless.
+- DXF import promotes `CIRCLE`/`ARC` entities into Bézier-based nodes via `buildNodesFromDXFShape` (`createCircleNodes`/`createArcNodes`). Extend that pipeline for additional entity types to keep curvature intact instead of falling back to polylines.
+- The Scene panel splits saved scenes and shapes with shared rename/load affordances and exposes a diameter input under “Add reference circle”. Keep the copy control inside the tool grid and maintain the new left/right sidebar card order (grid tools on the left, scene management on the right).

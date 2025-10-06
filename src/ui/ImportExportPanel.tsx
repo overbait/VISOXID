@@ -1,13 +1,51 @@
 import { useRef, type ChangeEvent } from 'react';
-import { exportProjectToJSON, importProjectFromJSON, exportProjectToPNG, exportProjectToSVG } from '../utils/io';
+import {
+  exportProjectToJSON,
+  importProjectFromJSON,
+  exportProjectToPNG,
+  exportProjectToSVG,
+} from '../utils/io';
+import { parseDXFShapes, serializePathsToDXF } from '../utils/dxf';
 import { useWorkspaceStore } from '../state';
+import { createId } from '../utils/ids';
+import { createArcNodes, createCircleNodes } from '../utils/presets';
+
+type ParsedDXFShape = ReturnType<typeof parseDXFShapes>[number];
+
+const buildNodesFromDXFShape = (shape: ParsedDXFShape) => {
+  if (shape.source === 'circle' && shape.center && Number.isFinite(shape.radius)) {
+    return createCircleNodes(shape.center, shape.radius ?? 0);
+  }
+  if (
+    shape.source === 'arc' &&
+    shape.center &&
+    Number.isFinite(shape.radius) &&
+    Number.isFinite(shape.startAngle ?? NaN) &&
+    Number.isFinite(shape.sweep ?? NaN)
+  ) {
+    const nodes = createArcNodes(shape.center, shape.radius ?? 0, shape.startAngle ?? 0, shape.sweep ?? 0);
+    if (nodes.length >= 2) {
+      return nodes;
+    }
+  }
+  return shape.points.map((point) => ({
+    id: createId('node'),
+    point: { ...point },
+    handleIn: null,
+    handleOut: null,
+  }));
+};
 
 export const ImportExportPanel = () => {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const dxfInputRef = useRef<HTMLInputElement | null>(null);
   const undo = useWorkspaceStore((state) => state.undo);
   const redo = useWorkspaceStore((state) => state.redo);
   const importState = useWorkspaceStore((state) => state.importState);
   const pushWarning = useWorkspaceStore((state) => state.pushWarning);
+  const addPath = useWorkspaceStore((state) => state.addPath);
+  const setSelected = useWorkspaceStore((state) => state.setSelected);
+  const setNodeSelection = useWorkspaceStore((state) => state.setNodeSelection);
   const getState = useWorkspaceStore.getState;
 
   const handleExportJSON = () => {
@@ -31,6 +69,7 @@ export const ImportExportPanel = () => {
       console.error(error);
       pushWarning('Failed to import JSON', 'error');
     }
+    event.target.value = '';
   };
 
   const handleExportPNG = async () => {
@@ -51,6 +90,64 @@ export const ImportExportPanel = () => {
     URL.revokeObjectURL(link.href);
   };
 
+  const handleExportDXF = () => {
+    const { paths } = getState();
+    if (!paths.length) {
+      pushWarning('Nothing to export', 'warning');
+      return;
+    }
+    const dxf = serializePathsToDXF(paths);
+    const blob = new Blob([dxf], { type: 'application/dxf' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'visoxid-scene.dxf';
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const handleImportDXF = async (event: ChangeEvent<HTMLInputElement>) => {
+    const [file] = event.target.files ?? [];
+    if (!file) return;
+    const text = await file.text();
+    try {
+      const shapes = parseDXFShapes(text);
+      if (!shapes.length) {
+        pushWarning('DXF contained no supported entities', 'warning');
+        return;
+      }
+      const ids: string[] = [];
+      shapes.forEach((shape, index) => {
+        const nodes = buildNodesFromDXFShape(shape);
+        if (nodes.length < 2) {
+          return;
+        }
+        const metaId = createId('path');
+        const pathId = addPath(nodes, {
+          meta: {
+            id: metaId,
+            name: `${shape.kind === 'reference' ? 'Reference' : 'Imported'} ${index + 1}`,
+            closed: shape.closed,
+            visible: true,
+            locked: false,
+            color: '#2563eb',
+            kind: shape.kind,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        });
+        ids.push(pathId);
+      });
+      if (ids.length) {
+        setSelected(ids);
+        setNodeSelection(null);
+      }
+    } catch (error) {
+      console.error(error);
+      pushWarning('Failed to import DXF', 'error');
+    }
+    event.target.value = '';
+  };
+
   return (
     <div className="panel flex flex-col gap-3 p-4 text-xs text-muted">
       <div className="section-title">Project</div>
@@ -67,8 +164,15 @@ export const ImportExportPanel = () => {
         <button type="button" className="toolbar-button" onClick={handleExportSVG}>
           SVG stub
         </button>
+        <button type="button" className="toolbar-button" onClick={handleExportDXF}>
+          Export DXF
+        </button>
+        <button type="button" className="toolbar-button" onClick={() => dxfInputRef.current?.click()}>
+          Import DXF
+        </button>
       </div>
       <input ref={inputRef} type="file" accept="application/json" className="hidden" onChange={handleImportJSON} />
+      <input ref={dxfInputRef} type="file" accept=".dxf" className="hidden" onChange={handleImportDXF} />
       <div className="mt-2 flex items-center justify-between">
         <button type="button" className="toolbar-button" onClick={undo}>
           Undo

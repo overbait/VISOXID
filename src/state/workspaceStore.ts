@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   DirectionWeight,
   MeasurementProbe,
+  MeasurementState,
   NodeSelection,
   OxidationSettings,
   PathEntity,
@@ -10,8 +11,11 @@ import type {
   SamplePoint,
   Vec2,
   StoredShape,
+  StoredScene,
+  StoredSceneState,
   ToolId,
   PanelCollapseState,
+  PathKind,
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
@@ -31,12 +35,13 @@ import { laplacianSmooth } from '../geometry/smoothing';
 import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
 
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
+const SCENE_STORAGE_KEY = 'visoxid:scene-library';
 
 const MAX_THICKNESS_UM = 10;
 const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 8;
+const MAX_ZOOM = 4;
 const MAX_DOT_COUNT = 1000;
 const DEFAULT_DOT_COUNT = 240;
 
@@ -96,6 +101,7 @@ const loadLibrary = (): StoredShape[] => {
     const parsed = JSON.parse(raw) as StoredShape[];
     return parsed.map((shape) => ({
       ...shape,
+      pathType: (shape.pathType ?? 'oxided') as PathKind,
       nodes: shape.nodes.map((node) => ({ ...node })),
       oxidation: cloneOxidationSettings(shape.oxidation),
     }));
@@ -110,12 +116,83 @@ const persistLibrary = (library: StoredShape[]): void => {
   try {
     const serialisable = library.map((shape) => ({
       ...shape,
+      pathType: shape.pathType ?? 'oxided',
       nodes: shape.nodes.map((node) => ({ ...node })),
       oxidation: cloneOxidationSettings(shape.oxidation),
     }));
     window.localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(serialisable));
   } catch (error) {
     console.warn('Failed to persist shape library', error);
+  }
+};
+
+const cloneMeasurementProbe = (probe: MeasurementProbe | null): MeasurementProbe | null => {
+  if (!probe) {
+    return null;
+  }
+  return {
+    ...probe,
+    a: { ...probe.a },
+    b: { ...probe.b },
+  };
+};
+
+const cloneMeasurementState = (measurements: MeasurementState): MeasurementState => ({
+  hoverProbe: cloneMeasurementProbe(measurements.hoverProbe ?? null),
+  pinnedProbe: cloneMeasurementProbe(measurements.pinnedProbe ?? null),
+  dragProbe: cloneMeasurementProbe(measurements.dragProbe ?? null),
+  snapping: measurements.snapping,
+  showHeatmap: measurements.showHeatmap,
+});
+
+const cloneStoredSceneState = (state: StoredSceneState): StoredSceneState => ({
+  paths: state.paths.map(clonePath),
+  selectedPathIds: [...state.selectedPathIds],
+  nodeSelection: state.nodeSelection
+    ? { pathId: state.nodeSelection.pathId, nodeIds: [...state.nodeSelection.nodeIds] }
+    : null,
+  activeTool: state.activeTool,
+  pan: { ...state.pan },
+  zoom: state.zoom,
+  grid: { ...state.grid },
+  mirror: { ...state.mirror, origin: { ...state.mirror.origin } },
+  oxidationDefaults: cloneOxidationSettings(state.oxidationDefaults),
+  measurements: cloneMeasurementState(state.measurements),
+  oxidationVisible: state.oxidationVisible,
+  oxidationProgress: state.oxidationProgress,
+  oxidationDotCount: state.oxidationDotCount,
+  directionalLinking: state.directionalLinking,
+  panelCollapse: normalizePanelCollapse(state.panelCollapse),
+});
+
+const cloneStoredScene = (scene: StoredScene): StoredScene => ({
+  ...scene,
+  state: cloneStoredSceneState(scene.state),
+});
+
+const loadScenes = (): StoredScene[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(SCENE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as StoredScene[];
+    return parsed.map((scene) => cloneStoredScene(scene));
+  } catch (error) {
+    console.warn('Failed to load stored scenes', error);
+    return [];
+  }
+};
+
+const persistScenes = (scenes: StoredScene[]): void => {
+  if (typeof window === 'undefined') return;
+  try {
+    const serialisable = scenes.map((scene) => ({
+      ...scene,
+      state: cloneStoredSceneState(scene.state),
+    }));
+    window.localStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(serialisable));
+  } catch (error) {
+    console.warn('Failed to persist scene library', error);
   }
 };
 
@@ -752,7 +829,7 @@ const pruneNodeSelection = (
   return retained.length ? { pathId, nodeIds: retained } : null;
 };
 
-const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
+const createEmptyState = (library: StoredShape[] = [], scenes: StoredScene[] = []): WorkspaceState => ({
   paths: [],
   selectedPathIds: [],
   nodeSelection: null,
@@ -789,6 +866,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   directionalLinking: true,
   bootstrapped: false,
   library,
+  scenes,
   panelCollapse: {
     rightSidebar: false,
   },
@@ -809,6 +887,7 @@ const clonePath = (path: PathEntity): PathEntity => ({
 
 const cloneStoredShape = (shape: StoredShape): StoredShape => ({
   ...shape,
+  pathType: shape.pathType ?? 'oxided',
   nodes: shape.nodes.map((node) => ({ ...node })),
   oxidation: cloneOxidationSettings(shape.oxidation),
 });
@@ -844,6 +923,26 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   panelCollapse: normalizePanelCollapse(state.panelCollapse),
 });
 
+const captureSceneState = (state: WorkspaceState): StoredSceneState => ({
+  paths: state.paths.map(clonePath),
+  selectedPathIds: [...state.selectedPathIds],
+  nodeSelection: state.nodeSelection
+    ? { pathId: state.nodeSelection.pathId, nodeIds: [...state.nodeSelection.nodeIds] }
+    : null,
+  activeTool: state.activeTool,
+  pan: { ...state.pan },
+  zoom: state.zoom,
+  grid: { ...state.grid },
+  mirror: { ...state.mirror, origin: { ...state.mirror.origin } },
+  oxidationDefaults: cloneOxidationSettings(state.oxidationDefaults),
+  measurements: cloneMeasurementState(state.measurements),
+  oxidationVisible: state.oxidationVisible,
+  oxidationProgress: state.oxidationProgress,
+  oxidationDotCount: state.oxidationDotCount,
+  directionalLinking: state.directionalLinking,
+  panelCollapse: normalizePanelCollapse(state.panelCollapse),
+});
+
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
 
 type WorkspaceActions = {
@@ -868,6 +967,7 @@ type WorkspaceActions = {
   zoomBy: (delta: number) => void;
   duplicateSelectedPaths: () => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
+  setPathType: (kind: PathKind) => void;
   setHoverProbe: (probe: MeasurementProbe | null) => void;
   setPinnedProbe: (probe: MeasurementProbe | null) => void;
   setDragProbe: (probe: MeasurementProbe | null) => void;
@@ -883,6 +983,10 @@ type WorkspaceActions = {
   removeShapeFromLibrary: (shapeId: string) => void;
   renameShapeInLibrary: (shapeId: string, name: string) => void;
   loadShapeFromLibrary: (shapeId: string) => void;
+  saveSceneToLibrary: (name: string) => void;
+  removeSceneFromLibrary: (sceneId: string) => void;
+  renameSceneInLibrary: (sceneId: string, name: string) => void;
+  loadSceneFromLibrary: (sceneId: string) => void;
   resetScene: () => void;
   undo: () => void;
   redo: () => void;
@@ -920,13 +1024,19 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
     progress,
   };
-  const withThickness = evalThickness(normals, thicknessOptions);
+  const isReference = path.meta.kind === 'reference';
+  const withThickness = isReference
+    ? normals.map((sample) => ({ ...sample, thickness: 0 }))
+    : evalThickness(normals, thicknessOptions);
 
-  const { innerSamples, polygons } = deriveInnerGeometry(
-    withThickness,
-    path.meta.closed,
-    thicknessOptions,
-  );
+  let innerSamples: Vec2[] = [];
+  let polygons: Vec2[][] = [];
+
+  if (!isReference) {
+    const derived = deriveInnerGeometry(withThickness, path.meta.closed, thicknessOptions);
+    innerSamples = derived.innerSamples;
+    polygons = derived.polygons;
+  }
   const length = accumulateLength(withThickness);
   return {
     ...path,
@@ -966,9 +1076,10 @@ const applyGlobalOxidation = (
 };
 
 const initialLibrary = loadLibrary();
+const initialScenes = loadScenes();
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
-  ...createEmptyState(initialLibrary),
+  ...createEmptyState(initialLibrary, initialScenes),
   setActiveTool: (tool) => set({ activeTool: tool }),
   setPan: (pan) => set((state) => ({ ...state, pan })),
   panBy: (delta) =>
@@ -994,16 +1105,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         visible: true,
         locked: false,
         color: overrides?.meta?.color ?? '#2563eb',
+        kind: overrides?.meta?.kind ?? 'oxided',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+      if (!meta.kind) {
+        meta.kind = 'oxided';
+      }
       const clonedNodes = nodes.map((node) => ({ ...node }));
       const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(
         clonedNodes,
         meta.closed,
       );
       const snapped = applyMirrorSnapping(mergedNodes, mirror);
-      const finalMeta = { ...meta, closed: meta.closed || closed };
+      const finalMeta = { ...meta, closed: meta.closed || closed, kind: meta.kind ?? 'oxided' };
       const newPath: PathEntity = runGeometryPipeline(
         {
           meta: finalMeta,
@@ -1035,6 +1150,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (index === -1) return state;
       const history = [...state.history, captureSnapshot(state)].slice(-50);
       const target = state.paths[index];
+      if (target.meta.kind === 'reference') {
+        return state;
+      }
       const nodes = updater(target.nodes.map((node) => ({ ...node })));
       const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, target.meta.closed);
       const snapped = applyMirrorSnapping(mergedNodes, mirror);
@@ -1081,19 +1199,35 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     });
   },
   setSelected: (ids) =>
-    set((state) => ({
-      selectedPathIds: ids,
-      nodeSelection:
-        state.nodeSelection && ids.includes(state.nodeSelection.pathId)
-          ? state.nodeSelection
-          : null,
-    })),
+    set((state) => {
+      let nextSelection: NodeSelection | null = null;
+      if (state.nodeSelection && ids.includes(state.nodeSelection.pathId)) {
+        const path = state.paths.find((entry) => entry.meta.id === state.nodeSelection?.pathId);
+        if (path && path.meta.kind !== 'reference') {
+          nextSelection = state.nodeSelection;
+        }
+      }
+      return {
+        selectedPathIds: ids,
+        nodeSelection: nextSelection,
+      };
+    }),
   setNodeSelection: (selection) =>
-    set(() => ({
-      nodeSelection: selection
-        ? { pathId: selection.pathId, nodeIds: [...selection.nodeIds] }
-        : null,
-    })),
+    set((state) => {
+      if (!selection) {
+        return { nodeSelection: null };
+      }
+      const path = state.paths.find((entry) => entry.meta.id === selection.pathId);
+      if (!path || path.meta.kind === 'reference') {
+        return { nodeSelection: null };
+      }
+      const allowed = new Set(path.nodes.map((node) => node.id));
+      const filtered = selection.nodeIds.filter((id) => allowed.has(id));
+      if (!filtered.length) {
+        return { nodeSelection: null };
+      }
+      return { nodeSelection: { pathId: selection.pathId, nodeIds: filtered } };
+    }),
   translatePaths: (pathIds, delta) =>
     set((state) => {
       if (!pathIds.length) return state;
@@ -1197,6 +1331,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pathIndex = state.paths.findIndex((path) => path.meta.id === selection.pathId);
       if (pathIndex === -1) return state;
       const path = state.paths[pathIndex];
+      if (path.meta.kind === 'reference') {
+        return state;
+      }
       const remainingNodes = path.nodes.filter((node) => !selection.nodeIds.includes(node.id));
       if (remainingNodes.length === path.nodes.length) {
         return state;
@@ -1230,6 +1367,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pathIndex = state.paths.findIndex((path) => path.meta.id === pathId);
       if (pathIndex === -1) return state;
       const path = state.paths[pathIndex];
+      if (path.meta.kind === 'reference') {
+        return state;
+      }
       const nodeIndex = path.nodes.findIndex((node) => node.id === nodeId);
       if (nodeIndex === -1) return state;
       const history = [...state.history, captureSnapshot(state)].slice(-50);
@@ -1349,6 +1489,45 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
       return { ...state, paths: nextPaths, dirty: true };
     }),
+  setPathType: (kind) =>
+    set((state) => {
+      if (!state.selectedPathIds.length) {
+        return state;
+      }
+      const ids = new Set(state.selectedPathIds);
+      let changed = false;
+      const snapshot = captureSnapshot(state);
+      const now = Date.now();
+      const nextPaths = state.paths.map((path) => {
+        if (!ids.has(path.meta.id)) {
+          return path;
+        }
+        if (path.meta.kind === kind) {
+          return path;
+        }
+        changed = true;
+        const meta = { ...path.meta, kind, updatedAt: now };
+        return runGeometryPipeline(
+          {
+            ...path,
+            meta,
+          },
+          state.oxidationProgress,
+        );
+      });
+      if (!changed) {
+        return state;
+      }
+      const history = [...state.history, snapshot].slice(-50);
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+        nodeSelection: null,
+      };
+    }),
   setHoverProbe: (probe) =>
     set((state) => ({
       measurements: { ...state.measurements, hoverProbe: probe },
@@ -1397,6 +1576,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         name: name.trim() || path.meta.name,
         nodes: path.nodes.map((node) => ({ ...node })),
         oxidation: cloneOxidationSettings(path.oxidation),
+        pathType: path.meta.kind ?? 'oxided',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -1433,9 +1613,102 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         visible: true,
         locked: false,
         color: '#2563eb',
+        kind: cloned.pathType ?? 'oxided',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },
+    });
+  },
+  saveSceneToLibrary: (name) =>
+    set((state) => {
+      const scene: StoredScene = {
+        id: createId('scene'),
+        name: name.trim() || `Scene ${state.scenes.length + 1}`,
+        state: captureSceneState(state),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      const scenes = [scene, ...state.scenes];
+      persistScenes(scenes);
+      return { ...state, scenes };
+    }),
+  removeSceneFromLibrary: (sceneId) =>
+    set((state) => {
+      const scenes = state.scenes.filter((scene) => scene.id !== sceneId);
+      persistScenes(scenes);
+      return { ...state, scenes };
+    }),
+  renameSceneInLibrary: (sceneId, name) =>
+    set((state) => {
+      const scenes = state.scenes.map((scene) =>
+        scene.id === sceneId
+          ? { ...scene, name: name.trim() || scene.name, updatedAt: Date.now() }
+          : scene,
+      );
+      persistScenes(scenes);
+      return { ...state, scenes };
+    }),
+  loadSceneFromLibrary: (sceneId) => {
+    const stored = get().scenes.find((entry) => entry.id === sceneId);
+    if (!stored) return;
+    const clonedScene = cloneStoredScene(stored);
+    set((state) => {
+      const base = createEmptyState(
+        state.library.map(cloneStoredShape),
+        state.scenes.map(cloneStoredScene),
+      );
+      const sanitizedProgress = clamp(clonedScene.state.oxidationProgress, 0, 1);
+      const rehydratedPaths = clonedScene.state.paths.map((path) =>
+        runGeometryPipeline(
+          {
+            ...path,
+            nodes: path.nodes.map((node) => ({ ...node })),
+            oxidation: cloneOxidationSettings(path.oxidation),
+            meta: { ...path.meta, kind: (path.meta.kind ?? 'oxided') as PathKind },
+            sampled: undefined,
+          },
+          sanitizedProgress,
+        ),
+      );
+      const existingIds = new Set(rehydratedPaths.map((path) => path.meta.id));
+      const selectedPathIds = clonedScene.state.selectedPathIds.filter((id) => existingIds.has(id));
+      let nodeSelection: NodeSelection | null = null;
+      if (clonedScene.state.nodeSelection && existingIds.has(clonedScene.state.nodeSelection.pathId)) {
+        const target = rehydratedPaths.find(
+          (path) => path.meta.id === clonedScene.state.nodeSelection?.pathId,
+        );
+        if (target && target.meta.kind !== 'reference') {
+          const allowed = new Set(target.nodes.map((node) => node.id));
+          const filtered = clonedScene.state.nodeSelection.nodeIds.filter((id) => allowed.has(id));
+          if (filtered.length) {
+            nodeSelection = { pathId: target.meta.id, nodeIds: filtered };
+          }
+        }
+      }
+      return {
+        ...base,
+        paths: rehydratedPaths,
+        selectedPathIds,
+        nodeSelection,
+        activeTool: clonedScene.state.activeTool,
+        pan: { ...clonedScene.state.pan },
+        zoom: clampZoom(clonedScene.state.zoom),
+        grid: { ...clonedScene.state.grid },
+        mirror: { ...clonedScene.state.mirror, origin: { ...clonedScene.state.mirror.origin } },
+        oxidationDefaults: cloneOxidationSettings(clonedScene.state.oxidationDefaults),
+        measurements: cloneMeasurementState(clonedScene.state.measurements),
+        oxidationVisible: clonedScene.state.oxidationVisible,
+        oxidationProgress: sanitizedProgress,
+        oxidationDotCount: clampDotCount(clonedScene.state.oxidationDotCount),
+        directionalLinking: clonedScene.state.directionalLinking,
+        panelCollapse: normalizePanelCollapse(clonedScene.state.panelCollapse),
+        library: state.library.map(cloneStoredShape),
+        scenes: state.scenes.map(cloneStoredScene),
+        history: [],
+        future: [],
+        dirty: true,
+        bootstrapped: true,
+      };
     });
   },
   resetScene: () =>
@@ -1511,26 +1784,66 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     });
   },
   importState: (payload) =>
-    set((state) => ({
-      ...createEmptyState(state.library.map(cloneStoredShape)),
-      ...payload,
-      oxidationVisible: payload.oxidationVisible ?? true,
-      oxidationProgress: payload.oxidationProgress ?? 1,
-      oxidationDotCount: clampDotCount(payload.oxidationDotCount ?? DEFAULT_DOT_COUNT),
-      directionalLinking: payload.directionalLinking ?? true,
-      bootstrapped: payload.bootstrapped ?? true,
-      library: state.library.map(cloneStoredShape),
-      history: [],
-      future: [],
-      dirty: false,
-      zoom: clampZoom(payload.zoom ?? 1),
-      pan: payload.pan ?? { x: 0, y: 0 },
-      panelCollapse: normalizePanelCollapse(payload.panelCollapse),
-    })),
+    set((state) => {
+      const sanitizedProgress = clamp(payload.oxidationProgress ?? 1, 0, 1);
+      const rehydratedPaths = (payload.paths ?? []).map((path) =>
+        runGeometryPipeline(
+          {
+            ...path,
+            nodes: path.nodes.map((node) => ({ ...node })),
+            oxidation: cloneOxidationSettings(path.oxidation),
+            meta: { ...path.meta, kind: (path.meta.kind ?? 'oxided') as PathKind },
+            sampled: undefined,
+          },
+          sanitizedProgress,
+        ),
+      );
+      const existingIds = new Set(rehydratedPaths.map((path) => path.meta.id));
+      const selectedPathIds = (payload.selectedPathIds ?? []).filter((id) => existingIds.has(id));
+      let nodeSelection: NodeSelection | null = null;
+      if (payload.nodeSelection) {
+        const target = rehydratedPaths.find((path) => path.meta.id === payload.nodeSelection?.pathId);
+        if (target && target.meta.kind !== 'reference') {
+          const allowed = new Set(target.nodes.map((node) => node.id));
+          const filtered = payload.nodeSelection.nodeIds.filter((id) => allowed.has(id));
+          if (filtered.length) {
+            nodeSelection = { pathId: target.meta.id, nodeIds: filtered };
+          }
+        }
+      }
+      const base = createEmptyState(
+        state.library.map(cloneStoredShape),
+        state.scenes.map(cloneStoredScene),
+      );
+      return {
+        ...base,
+        ...payload,
+        paths: rehydratedPaths,
+        selectedPathIds,
+        nodeSelection,
+        oxidationVisible: payload.oxidationVisible ?? true,
+        oxidationProgress: sanitizedProgress,
+        oxidationDotCount: clampDotCount(payload.oxidationDotCount ?? DEFAULT_DOT_COUNT),
+        directionalLinking: payload.directionalLinking ?? true,
+        bootstrapped: payload.bootstrapped ?? true,
+        library: state.library.map(cloneStoredShape),
+        scenes: state.scenes.map(cloneStoredScene),
+        history: [],
+        future: [],
+        dirty: false,
+        zoom: clampZoom(payload.zoom ?? 1),
+        pan: payload.pan ?? { x: 0, y: 0 },
+        panelCollapse: normalizePanelCollapse(payload.panelCollapse),
+      };
+    }),
   reset: () =>
     set((state) => ({
-      ...createEmptyState(state.library.map(cloneStoredShape)),
+      ...createEmptyState(
+        state.library.map(cloneStoredShape),
+        state.scenes.map(cloneStoredScene),
+      ),
       library: state.library.map(cloneStoredShape),
+      scenes: state.scenes.map(cloneStoredScene),
     })),
   toggleSegmentCurve: (pathId, segmentIndex) => {
     const mirror = get().mirror;
@@ -1538,6 +1851,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pathIndex = state.paths.findIndex((path) => path.meta.id === pathId);
       if (pathIndex === -1) return state;
       const path = state.paths[pathIndex];
+      if (path.meta.kind === 'reference') {
+        return state;
+      }
       const totalSegments = path.meta.closed ? path.nodes.length : path.nodes.length - 1;
       if (segmentIndex < 0 || segmentIndex >= totalSegments) {
         return state;
