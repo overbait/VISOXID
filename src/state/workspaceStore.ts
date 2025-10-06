@@ -11,6 +11,7 @@ import type {
   Vec2,
   StoredShape,
   ToolId,
+  PanelCollapseState,
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
@@ -756,6 +757,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   selectedPathIds: [],
   nodeSelection: null,
   activeTool: 'line',
+  pan: { x: 0, y: 0 },
   zoom: 1,
   grid: {
     visible: true,
@@ -787,6 +789,9 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   directionalLinking: true,
   bootstrapped: false,
   library,
+  panelCollapse: {
+    rightSidebar: false,
+  },
 });
 
 const clonePath = (path: PathEntity): PathEntity => ({
@@ -808,6 +813,22 @@ const cloneStoredShape = (shape: StoredShape): StoredShape => ({
   oxidation: cloneOxidationSettings(shape.oxidation),
 });
 
+const normalizePanelCollapse = (value: unknown): PanelCollapseState => {
+  if (value && typeof value === 'object') {
+    if ('rightSidebar' in (value as Record<string, unknown>)) {
+      const collapsed = (value as { rightSidebar?: unknown }).rightSidebar;
+      if (typeof collapsed === 'boolean') {
+        return { rightSidebar: collapsed };
+      }
+    }
+    const legacy = value as { oxidation?: unknown; grid?: unknown };
+    if (typeof legacy.oxidation === 'boolean' || typeof legacy.grid === 'boolean') {
+      return { rightSidebar: Boolean(legacy.oxidation && legacy.grid) };
+    }
+  }
+  return { rightSidebar: false };
+};
+
 const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   timestamp: Date.now(),
   paths: state.paths.map(clonePath),
@@ -819,17 +840,22 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   oxidationProgress: state.oxidationProgress,
   oxidationDotCount: state.oxidationDotCount,
   zoom: state.zoom,
+  pan: { ...state.pan },
+  panelCollapse: normalizePanelCollapse(state.panelCollapse),
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
 
 type WorkspaceActions = {
   setActiveTool: (tool: ToolId) => void;
+  setPan: (pan: Vec2) => void;
+  panBy: (delta: Vec2) => void;
   addPath: (nodes: PathNode[], overrides?: Partial<PathEntity>) => string;
   updatePath: (id: string, updater: PathUpdater) => void;
   removePath: (id: string) => void;
   setSelected: (ids: string[]) => void;
   setNodeSelection: (selection: NodeSelection | null) => void;
+  translatePaths: (pathIds: string[], delta: Vec2) => void;
   deleteSelectedNodes: () => void;
   setNodeCurveMode: (pathId: string, nodeId: string, mode: 'line' | 'bezier') => void;
   updateGrid: (settings: Partial<WorkspaceState['grid']>) => void;
@@ -840,6 +866,7 @@ type WorkspaceActions = {
   setOxidationProgress: (value: number) => void;
   setZoom: (zoom: number) => void;
   zoomBy: (delta: number) => void;
+  duplicateSelectedPaths: () => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
   setHoverProbe: (probe: MeasurementProbe | null) => void;
   setPinnedProbe: (probe: MeasurementProbe | null) => void;
@@ -851,6 +878,7 @@ type WorkspaceActions = {
   toggleOxidationVisible: (value: boolean) => void;
   setOxidationDotCount: (value: number) => void;
   markBootstrapped: () => void;
+  setPanelCollapsed: (collapsed: boolean) => void;
   saveShapeToLibrary: (pathId: string, name: string) => void;
   removeShapeFromLibrary: (shapeId: string) => void;
   renameShapeInLibrary: (shapeId: string, name: string) => void;
@@ -942,6 +970,12 @@ const initialLibrary = loadLibrary();
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   ...createEmptyState(initialLibrary),
   setActiveTool: (tool) => set({ activeTool: tool }),
+  setPan: (pan) => set((state) => ({ ...state, pan })),
+  panBy: (delta) =>
+    set((state) => ({
+      ...state,
+      pan: { x: state.pan.x + delta.x, y: state.pan.y + delta.y },
+    })),
   setZoom: (zoom) => set((state) => ({ ...state, zoom: clampZoom(zoom) })),
   zoomBy: (delta) =>
     set((state) => ({
@@ -1060,6 +1094,102 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         ? { pathId: selection.pathId, nodeIds: [...selection.nodeIds] }
         : null,
     })),
+  translatePaths: (pathIds, delta) =>
+    set((state) => {
+      if (!pathIds.length) return state;
+      if (Math.abs(delta.x) < 1e-6 && Math.abs(delta.y) < 1e-6) return state;
+      const ids = new Set(pathIds);
+      let moved = false;
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const shiftHandle = (handle: Vec2 | null | undefined): Vec2 | null | undefined => {
+        if (handle === null || handle === undefined) return handle;
+        return { x: handle.x + delta.x, y: handle.y + delta.y };
+      };
+      const nextPaths = state.paths.map((path) => {
+        if (!ids.has(path.meta.id) || path.meta.locked) {
+          return path;
+        }
+        moved = true;
+        const movedNodes = path.nodes.map((node) => ({
+          ...node,
+          point: { x: node.point.x + delta.x, y: node.point.y + delta.y },
+          handleIn: shiftHandle(node.handleIn),
+          handleOut: shiftHandle(node.handleOut),
+        }));
+        return runGeometryPipeline(
+          {
+            ...path,
+            nodes: movedNodes,
+            meta: { ...path.meta, updatedAt: Date.now() },
+          },
+          state.oxidationProgress,
+        );
+      });
+      if (!moved) {
+        return state;
+      }
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+      };
+    }),
+  duplicateSelectedPaths: () =>
+    set((state) => {
+      if (!state.selectedPathIds.length) return state;
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const selected = new Set(state.selectedPathIds);
+      const now = Date.now();
+      const newPaths: PathEntity[] = [];
+      const newSelection: string[] = [];
+      state.paths.forEach((path) => {
+        if (!selected.has(path.meta.id)) return;
+        const newId = createId('path');
+        const cloneHandle = (handle: Vec2 | null | undefined): Vec2 | null | undefined => {
+          if (handle === null || handle === undefined) return handle;
+          return { ...handle };
+        };
+        const clonedNodes = path.nodes.map((node) => ({
+          ...node,
+          id: createId('node'),
+          point: { ...node.point },
+          handleIn: cloneHandle(node.handleIn),
+          handleOut: cloneHandle(node.handleOut),
+        }));
+        const meta: PathMeta = {
+          ...path.meta,
+          id: newId,
+          name: `${path.meta.name} copy`,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const duplicated = runGeometryPipeline(
+          {
+            meta,
+            nodes: clonedNodes,
+            oxidation: cloneOxidationSettings(path.oxidation),
+            sampled: undefined,
+          },
+          state.oxidationProgress,
+        );
+        newPaths.push(duplicated);
+        newSelection.push(newId);
+      });
+      if (!newPaths.length) {
+        return state;
+      }
+      return {
+        ...state,
+        paths: [...state.paths, ...newPaths],
+        selectedPathIds: newSelection,
+        nodeSelection: null,
+        history,
+        future: [],
+        dirty: true,
+      };
+    }),
   deleteSelectedNodes: () =>
     set((state) => {
       const selection = state.nodeSelection;
@@ -1254,6 +1384,10 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   toggleOxidationVisible: (value) => set({ oxidationVisible: value }),
   setOxidationDotCount: (value) => set({ oxidationDotCount: clampDotCount(value) }),
   markBootstrapped: () => set({ bootstrapped: true }),
+  setPanelCollapsed: (collapsed) =>
+    set(() => ({
+      panelCollapse: { rightSidebar: collapsed },
+    })),
   saveShapeToLibrary: (pathId, name) =>
     set((state) => {
       const path = state.paths.find((entry) => entry.meta.id === pathId);
@@ -1321,6 +1455,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       dirty: true,
       bootstrapped: true,
       oxidationDotCount: DEFAULT_DOT_COUNT,
+      pan: { x: 0, y: 0 },
+      panelCollapse: { rightSidebar: false },
     })),
   undo: () => {
     const { history } = get();
@@ -1343,6 +1479,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         oxidationProgress: previous.oxidationProgress,
         oxidationDotCount: previous.oxidationDotCount,
         zoom: previous.zoom,
+        pan: { ...previous.pan },
+        panelCollapse: normalizePanelCollapse(previous.panelCollapse),
       };
     });
   },
@@ -1367,6 +1505,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         oxidationProgress: snapshot.oxidationProgress,
         oxidationDotCount: snapshot.oxidationDotCount,
         zoom: snapshot.zoom,
+        pan: { ...snapshot.pan },
+        panelCollapse: normalizePanelCollapse(snapshot.panelCollapse),
       };
     });
   },
@@ -1384,6 +1524,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       future: [],
       dirty: false,
       zoom: clampZoom(payload.zoom ?? 1),
+      pan: payload.pan ?? { x: 0, y: 0 },
+      panelCollapse: normalizePanelCollapse(payload.panelCollapse),
     })),
   reset: () =>
     set((state) => ({

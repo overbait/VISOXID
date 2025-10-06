@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
+import { clsx } from 'clsx';
 import { createRenderer } from '../canvas/renderer';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
@@ -48,6 +49,7 @@ export const CanvasViewport = () => {
   const measurements = useWorkspaceStore((state) => state.measurements);
   const setSelected = useWorkspaceStore((state) => state.setSelected);
   const setNodeSelection = useWorkspaceStore((state) => state.setNodeSelection);
+  const translatePaths = useWorkspaceStore((state) => state.translatePaths);
   const updatePath = useWorkspaceStore((state) => state.updatePath);
   const addPath = useWorkspaceStore((state) => state.addPath);
   const setPathMeta = useWorkspaceStore((state) => state.setPathMeta);
@@ -57,10 +59,17 @@ export const CanvasViewport = () => {
   const zoom = useWorkspaceStore((state) => state.zoom);
   const setZoom = useWorkspaceStore((state) => state.setZoom);
   const zoomBy = useWorkspaceStore((state) => state.zoomBy);
+  const pan = useWorkspaceStore((state) => state.pan);
+  const panBy = useWorkspaceStore((state) => state.panBy);
+  const rightSidebarCollapsed = useWorkspaceStore((state) => state.panelCollapse.rightSidebar);
   const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
+  const selectionDrag = useRef<{ pathIds: string[]; last: Vec2; moved: boolean } | null>(null);
+  const panSession = useRef<{ lastCanvas: Vec2 } | null>(null);
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
+
+  const canvasWidthClass = rightSidebarCollapsed ? 'max-w-[1080px]' : 'max-w-[760px]';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -77,7 +86,7 @@ export const CanvasViewport = () => {
   } => {
     const canvas = canvasRef.current;
     if (!canvas) {
-      const view = computeViewTransform(1, 1, zoom);
+      const view = computeViewTransform(1, 1, zoom, pan);
       return { world: { x: 0, y: 0 }, canvas: { x: 0, y: 0 }, view };
     }
     const rect = canvas.getBoundingClientRect();
@@ -85,7 +94,7 @@ export const CanvasViewport = () => {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
-    const view = computeViewTransform(rect.width, rect.height, zoom);
+    const view = computeViewTransform(rect.width, rect.height, zoom, pan);
     const world = canvasToWorld(canvasPoint, view);
     return { world, canvas: canvasPoint, view };
   };
@@ -370,7 +379,7 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { world: position, view } = getPointerContext(event);
+    const { world: position, canvas, view } = getPointerContext(event);
     if (activeTool === 'measure') {
       const dragId = createId('probe');
       measureStart.current = { origin: position, moved: false };
@@ -380,9 +389,14 @@ export const CanvasViewport = () => {
         b: position,
         distance: 0,
         angleDeg: 0,
-        thicknessA: 0,
-        thicknessB: 0,
+        thicknessA: undefined,
+        thicknessB: undefined,
       });
+      canvasRef.current?.setPointerCapture(event.pointerId);
+      return;
+    }
+    if (activeTool === 'pan') {
+      panSession.current = { lastCanvas: canvas };
       canvasRef.current?.setPointerCapture(event.pointerId);
       return;
     }
@@ -432,8 +446,19 @@ export const CanvasViewport = () => {
       }
       const pathId = hitTestPath(position, view);
       if (pathId) {
-        setSelected([pathId]);
+        const state = useWorkspaceStore.getState();
+        const path = state.paths.find((entry) => entry.meta.id === pathId);
+        const nextSelection = state.selectedPathIds.includes(pathId)
+          ? [...state.selectedPathIds]
+          : [pathId];
+        setSelected(nextSelection);
         setNodeSelection(null);
+        if (path && !path.meta.locked) {
+          selectionDrag.current = { pathIds: nextSelection, last: position, moved: false };
+          canvasRef.current?.setPointerCapture(event.pointerId);
+          return;
+        }
+        return;
       } else if (!event.shiftKey) {
         setSelected([]);
         setNodeSelection(null);
@@ -443,7 +468,7 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { world: position, view } = getPointerContext(event);
+    const { world: position, canvas, view } = getPointerContext(event);
     if (activeTool === 'measure') {
       if (measureStart.current && measurements.dragProbe) {
         const origin = measureStart.current.origin;
@@ -455,31 +480,53 @@ export const CanvasViewport = () => {
           measureStart.current.moved = true;
         }
         const angle = Math.atan2(dy, dx);
-        const thickness = sampleGlobalThickness(angle);
-        const dirLength = Math.hypot(dx, dy);
-        const basis =
-          dirLength > 1e-6
-            ? { x: dx / dirLength, y: dy / dirLength }
-            : { x: Math.cos(angle), y: Math.sin(angle) };
-        const endpoint = {
-          x: origin.x + basis.x * thickness,
-          y: origin.y + basis.y * thickness,
-        };
         setDragProbe({
           ...measurements.dragProbe,
-          b: endpoint,
-          distance: thickness,
+          b: position,
+          distance: rawDistance,
           angleDeg: toDegrees(angle),
-          thicknessA: thickness,
-          thicknessB: thickness,
+          thicknessA: undefined,
+          thicknessB: undefined,
         });
       } else {
         updateHoverMeasurement(position, view);
       }
       return;
     }
-    if (activeTool === 'select' && dragTarget.current) {
-      updateGeometryForDrag(dragTarget.current, position);
+    if (activeTool === 'pan') {
+      if (panSession.current) {
+        const last = panSession.current.lastCanvas;
+        const deltaCanvas = { x: canvas.x - last.x, y: canvas.y - last.y };
+        if (Math.abs(deltaCanvas.x) > 1e-3 || Math.abs(deltaCanvas.y) > 1e-3) {
+          const delta = {
+            x: canvasDistanceToWorld(deltaCanvas.x, view),
+            y: canvasDistanceToWorld(deltaCanvas.y, view),
+          };
+          panBy({ x: -delta.x, y: -delta.y });
+          panSession.current.lastCanvas = canvas;
+        }
+      }
+      return;
+    }
+    if (activeTool === 'select') {
+      if (dragTarget.current) {
+        updateGeometryForDrag(dragTarget.current, position);
+        return;
+      }
+      if (selectionDrag.current) {
+        const session = selectionDrag.current;
+        const delta = { x: position.x - session.last.x, y: position.y - session.last.y };
+        if (Math.abs(delta.x) > 1e-6 || Math.abs(delta.y) > 1e-6) {
+          translatePaths(session.pathIds, delta);
+          const deltaLength = Math.hypot(delta.x, delta.y);
+          const moveThreshold = canvasDistanceToWorld(0.75, view);
+          if (!session.moved && deltaLength > moveThreshold) {
+            session.moved = true;
+          }
+          session.last = position;
+        }
+        return;
+      }
     }
   };
 
@@ -507,6 +554,8 @@ export const CanvasViewport = () => {
       canvasRef.current?.releasePointerCapture(event.pointerId);
       return;
     }
+    selectionDrag.current = null;
+    panSession.current = null;
     dragTarget.current = null;
     canvasRef.current?.releasePointerCapture(event.pointerId);
   };
@@ -535,8 +584,23 @@ export const CanvasViewport = () => {
     }
   }, [activeTool, setDragProbe, setHoverProbe]);
 
+  useEffect(() => {
+    if (activeTool !== 'select') {
+      selectionDrag.current = null;
+      dragTarget.current = null;
+    }
+    if (activeTool !== 'pan') {
+      panSession.current = null;
+    }
+  }, [activeTool]);
+
   return (
-    <div className="relative aspect-square w-full max-h-[80vh] max-w-[720px] self-start overflow-hidden rounded-3xl border border-border bg-surface shadow-panel">
+    <div
+      className={clsx(
+        'relative aspect-square w-full max-h-[80vh] self-start overflow-hidden rounded-3xl border border-border bg-surface shadow-panel',
+        canvasWidthClass,
+      )}
+    >
       <canvas
         ref={canvasRef}
         className="h-full w-full touch-none"

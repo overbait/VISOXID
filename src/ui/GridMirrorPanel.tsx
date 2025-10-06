@@ -7,7 +7,7 @@ export const GridMirrorPanel = () => {
   const updateMirror = useWorkspaceStore((state) => state.updateMirror);
 
   return (
-    <div className="panel flex flex-col gap-4 p-4">
+    <div className="panel flex flex-col gap-3 p-4">
       <div className="section-title">Grid</div>
       <div className="flex flex-col gap-3 text-xs text-muted">
         <ToggleRow

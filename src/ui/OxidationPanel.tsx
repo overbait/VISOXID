@@ -33,7 +33,7 @@ export const OxidationPanel = () => {
   );
 
   return (
-    <div className="panel flex flex-col gap-4 p-4">
+    <div className="panel flex flex-col gap-3 p-4">
       <div className="section-title">Oxidation</div>
       <label className="flex items-center justify-between text-xs font-medium text-muted">
         <span>Show compass dots</span>
@@ -75,10 +75,6 @@ export const OxidationPanel = () => {
           }}
           format={(value) => Math.round(value).toString()}
         />
-      </div>
-      <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs text-muted">
-        Use the compass card on the left to add, remove, or edit directional μm offsets. Toggle the chain icon there to choose
-        whether neighbouring headings adapt automatically.
       </div>
       <label className="flex items-center gap-2 text-xs font-medium text-muted">
         <input

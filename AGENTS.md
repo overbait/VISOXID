@@ -162,3 +162,24 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - The canvas no longer renders the oxide ribbon or dashed inner contour; `drawContours` now only strokes the outer path with a solid line. Keep it this way so the preview stays focused on per-point dots.
 - Line oxidation is visualised through `drawOxidationDots`, which drops translated compass patches along each sampled slice. Respect `oxidationDotCount` and the `oxidationVisible` flag when adjusting this overlay.
 - The Oxidation panel exposes a “Line preview dots” slider (0–1000). When touching the store, continue to clamp values via `clampDotCount` so undo/redo snapshots remain consistent.
+
+## 2025-11-04 — Canvas pan, collapsible panels & duplication
+
+- Workspace view state now tracks a `pan` vector alongside `zoom`. Use `panBy`/`setPan` when implementing navigation controls and always pass the active pan into `computeViewTransform` so hit-tests and rendering remain aligned.
+- The right-hand sidebar reclaiming logic hinges on `panelCollapse.rightSidebar`; preserve the CSS variable `--right-column` that App.tsx sets so the canvas can expand when the sidebar is hidden.
+- Dragging with the Select tool translates whole paths via `translatePaths`. The helper skips locked paths and records history—reuse it for future bulk transforms instead of reimplementing per-path loops.
+- The Tool panel now offers a Copy action (`duplicateSelectedPaths`, also bound to ⌘/Ctrl+D) that clones the current selection in-place. When introducing new selection tools, make sure they update `selectedPathIds` so duplication remains accurate.
+- Measurement drags are unconstrained ruler reads; probes store real endpoint coordinates instead of snapping to oxidation thickness. Hover measurements still sample the oxidation profile—preserve both modes when refining overlays.
+
+## 2025-11-05 — Centered zoom, roaming grid & collapse toggles
+
+- View transforms now keep the 50 μm workspace centred during zoom and apply pan deltas in canvas space. When adjusting navigation, update `computeViewTransform`/`CanvasViewport` together so drag maths stay stable after zooming.
+- Grid rendering projects from the current canvas bounds via `canvasToWorld`, so it follows the viewport anywhere. Avoid reintroducing fixed `0…extent` loops or the grid will disappear when panning.
+- The right-hand controls now collapse via a shared sidebar toggle. Honour `panelCollapse.rightSidebar` when adjusting layout so `CanvasViewport` width hints stay in sync.
+
+## 2025-11-06 — Unified sidebar collapse & PNG export stub
+
+- `panelCollapse` now only tracks `rightSidebar`; call `setPanelCollapsed(boolean)` to hide or reveal the Oxidation, Grid, and Measurement cards together and update any new UI to respect this global toggle.
+- Legacy snapshots may still carry `panelCollapse.oxidation/grid`; reuse `normalizePanelCollapse` when touching history/import logic so they migrate cleanly.
+- The compass inspector swaps the old helper text for an “Export PNG” button that currently fires an info toast via `pushWarning`. Wire the actual export routine through this button in future changes.
+- App bootstrap now guards the demo circle seeding with a ref so StrictMode’s double effects don’t spawn duplicate geometry. Keep this sentinel in place if you refactor startup flows.
