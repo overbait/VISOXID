@@ -61,7 +61,7 @@ export const CanvasViewport = () => {
   const zoomBy = useWorkspaceStore((state) => state.zoomBy);
   const pan = useWorkspaceStore((state) => state.pan);
   const panBy = useWorkspaceStore((state) => state.panBy);
-  const panelCollapse = useWorkspaceStore((state) => state.panelCollapse);
+  const rightSidebarCollapsed = useWorkspaceStore((state) => state.panelCollapse.rightSidebar);
   const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const selectionDrag = useRef<{ pathIds: string[]; last: Vec2; moved: boolean } | null>(null);
@@ -69,11 +69,7 @@ export const CanvasViewport = () => {
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
 
-  const canvasWidthClass = panelCollapse.oxidation && panelCollapse.grid
-    ? 'max-w-[1080px]'
-    : panelCollapse.oxidation || panelCollapse.grid
-      ? 'max-w-[920px]'
-      : 'max-w-[760px]';
+  const canvasWidthClass = rightSidebarCollapsed ? 'max-w-[1080px]' : 'max-w-[760px]';
 
   useEffect(() => {
     const canvas = canvasRef.current;

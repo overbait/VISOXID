@@ -93,6 +93,7 @@ export const DirectionalCompass = () => {
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
   const linking = useWorkspaceStore((state) => state.directionalLinking);
   const setLinking = useWorkspaceStore((state) => state.setDirectionalLinking);
+  const pushWarning = useWorkspaceStore((state) => state.pushWarning);
   const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
 
   const activeWeights = defaults.thicknessByDirection.items;
@@ -575,8 +576,14 @@ export const DirectionalCompass = () => {
             </div>
           </div>
         ) : (
-          <div className="text-center text-[11px] text-muted">
-            Select a spoke to edit its label, heading angle, and μm contribution. Use the plus rim to add more headings.
+          <div className="flex justify-center">
+            <button
+              type="button"
+              className="rounded-full border border-border bg-white/80 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent shadow-sm transition hover:bg-white"
+              onClick={() => pushWarning('PNG export is coming soon.', 'info')}
+            >
+              Export PNG
+            </button>
           </div>
         )}
       </div>

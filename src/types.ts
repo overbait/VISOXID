@@ -108,8 +108,7 @@ export interface MeasurementState {
 }
 
 export interface PanelCollapseState {
-  oxidation: boolean;
-  grid: boolean;
+  rightSidebar: boolean;
 }
 
 export interface NodeSelection {

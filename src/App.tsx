@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { CanvasViewport } from './ui/CanvasViewport';
 import { DirectionalCompass } from './ui/DirectionalCompass';
 import { ToolPanel } from './ui/ToolPanel';
@@ -13,18 +13,18 @@ import { useWorkspaceStore } from './state';
 import { createId } from './utils/ids';
 import { createCircleNodes } from './utils/presets';
 
-interface CollapsedPanelButtonProps {
-  label: string;
-  onClick: () => void;
+interface SidebarToggleButtonProps {
+  collapsed: boolean;
+  onToggle: () => void;
 }
 
-const CollapsedPanelButton = ({ label, onClick }: CollapsedPanelButtonProps) => (
+const SidebarToggleButton = ({ collapsed, onToggle }: SidebarToggleButtonProps) => (
   <button
     type="button"
     className="self-end rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent shadow transition hover:bg-surface/90"
-    onClick={onClick}
+    onClick={onToggle}
   >
-    Expand {label}
+    {collapsed ? 'Expand panels' : 'Collapse panels'}
   </button>
 );
 
@@ -37,30 +37,33 @@ export const App = () => {
   const markBootstrapped = useWorkspaceStore((state) => state.markBootstrapped);
   const panelCollapse = useWorkspaceStore((state) => state.panelCollapse);
   const setPanelCollapsed = useWorkspaceStore((state) => state.setPanelCollapsed);
+  const rightCollapsed = panelCollapse.rightSidebar;
 
-  const rightColumnWidth = panelCollapse.oxidation && panelCollapse.grid
-    ? 'max-content'
-    : panelCollapse.oxidation || panelCollapse.grid
-      ? '240px'
-      : '320px';
+  const rightColumnWidth = rightCollapsed ? 'max-content' : '320px';
 
   const gridStyle = { ['--right-column' as const]: rightColumnWidth } as CSSProperties;
 
+  const bootstrapGuard = useRef(false);
+
   useEffect(() => {
-    if (!bootstrapped && pathCount === 0) {
-      addPath(createCircleNodes({ x: 25, y: 25 }, 18), {
-        meta: {
-          id: createId('path'),
-          name: 'Reference circle',
-          closed: true,
-          visible: true,
-          locked: false,
-          color: '#2563eb',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-      });
-      pushWarning('Demo geometry loaded', 'info');
+    if (bootstrapGuard.current) return;
+    bootstrapGuard.current = true;
+    if (!bootstrapped) {
+      if (pathCount === 0) {
+        addPath(createCircleNodes({ x: 25, y: 25 }, 18), {
+          meta: {
+            id: createId('path'),
+            name: 'Reference circle',
+            closed: true,
+            visible: true,
+            locked: false,
+            color: '#2563eb',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+        });
+        pushWarning('Demo geometry loaded', 'info');
+      }
       markBootstrapped();
     }
   }, [addPath, bootstrapped, markBootstrapped, pathCount, pushWarning]);
@@ -86,23 +89,17 @@ export const App = () => {
           </div>
           <CanvasViewport />
           <div className="flex flex-col items-stretch gap-4">
-            {panelCollapse.oxidation ? (
-              <CollapsedPanelButton
-                label="Oxidation"
-                onClick={() => setPanelCollapsed('oxidation', false)}
-              />
-            ) : (
-              <OxidationPanel />
+            <SidebarToggleButton
+              collapsed={rightCollapsed}
+              onToggle={() => setPanelCollapsed(!rightCollapsed)}
+            />
+            {!rightCollapsed && (
+              <>
+                <OxidationPanel />
+                <GridMirrorPanel />
+                <MeasurementPanel />
+              </>
             )}
-            {panelCollapse.grid ? (
-              <CollapsedPanelButton
-                label="Grid"
-                onClick={() => setPanelCollapsed('grid', false)}
-              />
-            ) : (
-              <GridMirrorPanel />
-            )}
-            <MeasurementPanel />
           </div>
         </main>
         <StatusBar />

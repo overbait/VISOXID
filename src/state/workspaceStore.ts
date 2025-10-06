@@ -11,6 +11,7 @@ import type {
   Vec2,
   StoredShape,
   ToolId,
+  PanelCollapseState,
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
@@ -789,8 +790,7 @@ const createEmptyState = (library: StoredShape[] = []): WorkspaceState => ({
   bootstrapped: false,
   library,
   panelCollapse: {
-    oxidation: false,
-    grid: false,
+    rightSidebar: false,
   },
 });
 
@@ -813,6 +813,22 @@ const cloneStoredShape = (shape: StoredShape): StoredShape => ({
   oxidation: cloneOxidationSettings(shape.oxidation),
 });
 
+const normalizePanelCollapse = (value: unknown): PanelCollapseState => {
+  if (value && typeof value === 'object') {
+    if ('rightSidebar' in (value as Record<string, unknown>)) {
+      const collapsed = (value as { rightSidebar?: unknown }).rightSidebar;
+      if (typeof collapsed === 'boolean') {
+        return { rightSidebar: collapsed };
+      }
+    }
+    const legacy = value as { oxidation?: unknown; grid?: unknown };
+    if (typeof legacy.oxidation === 'boolean' || typeof legacy.grid === 'boolean') {
+      return { rightSidebar: Boolean(legacy.oxidation && legacy.grid) };
+    }
+  }
+  return { rightSidebar: false };
+};
+
 const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   timestamp: Date.now(),
   paths: state.paths.map(clonePath),
@@ -825,7 +841,7 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   oxidationDotCount: state.oxidationDotCount,
   zoom: state.zoom,
   pan: { ...state.pan },
-  panelCollapse: { ...state.panelCollapse },
+  panelCollapse: normalizePanelCollapse(state.panelCollapse),
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
@@ -862,7 +878,7 @@ type WorkspaceActions = {
   toggleOxidationVisible: (value: boolean) => void;
   setOxidationDotCount: (value: number) => void;
   markBootstrapped: () => void;
-  setPanelCollapsed: (panel: keyof WorkspaceState['panelCollapse'], collapsed: boolean) => void;
+  setPanelCollapsed: (collapsed: boolean) => void;
   saveShapeToLibrary: (pathId: string, name: string) => void;
   removeShapeFromLibrary: (shapeId: string) => void;
   renameShapeInLibrary: (shapeId: string, name: string) => void;
@@ -1368,9 +1384,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   toggleOxidationVisible: (value) => set({ oxidationVisible: value }),
   setOxidationDotCount: (value) => set({ oxidationDotCount: clampDotCount(value) }),
   markBootstrapped: () => set({ bootstrapped: true }),
-  setPanelCollapsed: (panel, collapsed) =>
-    set((state) => ({
-      panelCollapse: { ...state.panelCollapse, [panel]: collapsed },
+  setPanelCollapsed: (collapsed) =>
+    set(() => ({
+      panelCollapse: { rightSidebar: collapsed },
     })),
   saveShapeToLibrary: (pathId, name) =>
     set((state) => {
@@ -1440,7 +1456,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       bootstrapped: true,
       oxidationDotCount: DEFAULT_DOT_COUNT,
       pan: { x: 0, y: 0 },
-      panelCollapse: { oxidation: false, grid: false },
+      panelCollapse: { rightSidebar: false },
     })),
   undo: () => {
     const { history } = get();
@@ -1464,7 +1480,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         oxidationDotCount: previous.oxidationDotCount,
         zoom: previous.zoom,
         pan: { ...previous.pan },
-        panelCollapse: { ...previous.panelCollapse },
+        panelCollapse: normalizePanelCollapse(previous.panelCollapse),
       };
     });
   },
@@ -1490,7 +1506,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         oxidationDotCount: snapshot.oxidationDotCount,
         zoom: snapshot.zoom,
         pan: { ...snapshot.pan },
-        panelCollapse: { ...snapshot.panelCollapse },
+        panelCollapse: normalizePanelCollapse(snapshot.panelCollapse),
       };
     });
   },
@@ -1509,7 +1525,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       dirty: false,
       zoom: clampZoom(payload.zoom ?? 1),
       pan: payload.pan ?? { x: 0, y: 0 },
-      panelCollapse: payload.panelCollapse ?? { oxidation: false, grid: false },
+      panelCollapse: normalizePanelCollapse(payload.panelCollapse),
     })),
   reset: () =>
     set((state) => ({
