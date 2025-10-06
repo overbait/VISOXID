@@ -65,15 +65,15 @@ export const CanvasViewport = () => {
   const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const selectionDrag = useRef<{ pathIds: string[]; last: Vec2; moved: boolean } | null>(null);
-  const panSession = useRef<{ last: Vec2 } | null>(null);
+  const panSession = useRef<{ lastCanvas: Vec2 } | null>(null);
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
 
   const canvasWidthClass = panelCollapse.oxidation && panelCollapse.grid
-    ? 'max-w-[900px]'
+    ? 'max-w-[1080px]'
     : panelCollapse.oxidation || panelCollapse.grid
-      ? 'max-w-[800px]'
-      : 'max-w-[720px]';
+      ? 'max-w-[920px]'
+      : 'max-w-[760px]';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -383,7 +383,7 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { world: position, view } = getPointerContext(event);
+    const { world: position, canvas, view } = getPointerContext(event);
     if (activeTool === 'measure') {
       const dragId = createId('probe');
       measureStart.current = { origin: position, moved: false };
@@ -400,7 +400,7 @@ export const CanvasViewport = () => {
       return;
     }
     if (activeTool === 'pan') {
-      panSession.current = { last: position };
+      panSession.current = { lastCanvas: canvas };
       canvasRef.current?.setPointerCapture(event.pointerId);
       return;
     }
@@ -472,7 +472,7 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { world: position, view } = getPointerContext(event);
+    const { world: position, canvas, view } = getPointerContext(event);
     if (activeTool === 'measure') {
       if (measureStart.current && measurements.dragProbe) {
         const origin = measureStart.current.origin;
@@ -499,11 +499,15 @@ export const CanvasViewport = () => {
     }
     if (activeTool === 'pan') {
       if (panSession.current) {
-        const last = panSession.current.last;
-        const delta = { x: position.x - last.x, y: position.y - last.y };
-        if (Math.abs(delta.x) > 1e-6 || Math.abs(delta.y) > 1e-6) {
+        const last = panSession.current.lastCanvas;
+        const deltaCanvas = { x: canvas.x - last.x, y: canvas.y - last.y };
+        if (Math.abs(deltaCanvas.x) > 1e-3 || Math.abs(deltaCanvas.y) > 1e-3) {
+          const delta = {
+            x: canvasDistanceToWorld(deltaCanvas.x, view),
+            y: canvasDistanceToWorld(deltaCanvas.y, view),
+          };
           panBy({ x: -delta.x, y: -delta.y });
-          panSession.current.last = position;
+          panSession.current.lastCanvas = canvas;
         }
       }
       return;

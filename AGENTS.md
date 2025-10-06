@@ -170,3 +170,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Dragging with the Select tool translates whole paths via `translatePaths`. The helper skips locked paths and records history—reuse it for future bulk transforms instead of reimplementing per-path loops.
 - The Tool panel now offers a Copy action (`duplicateSelectedPaths`, also bound to ⌘/Ctrl+D) that clones the current selection in-place. When introducing new selection tools, make sure they update `selectedPathIds` so duplication remains accurate.
 - Measurement drags are unconstrained ruler reads; probes store real endpoint coordinates instead of snapping to oxidation thickness. Hover measurements still sample the oxidation profile—preserve both modes when refining overlays.
+
+## 2025-11-05 — Centered zoom, roaming grid & collapse toggles
+
+- View transforms now keep the 50 μm workspace centred during zoom and apply pan deltas in canvas space. When adjusting navigation, update `computeViewTransform`/`CanvasViewport` together so drag maths stay stable after zooming.
+- Grid rendering projects from the current canvas bounds via `canvasToWorld`, so it follows the viewport anywhere. Avoid reintroducing fixed `0…extent` loops or the grid will disappear when panning.
+- The right-hand Oxidation/Grid cards collapse into edge buttons (`CollapsedPanelButton`) that free the column width. Any new right-column panels should offer a collapsed affordance so the canvas can reclaim space.

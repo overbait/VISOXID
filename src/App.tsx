@@ -13,6 +13,21 @@ import { useWorkspaceStore } from './state';
 import { createId } from './utils/ids';
 import { createCircleNodes } from './utils/presets';
 
+interface CollapsedPanelButtonProps {
+  label: string;
+  onClick: () => void;
+}
+
+const CollapsedPanelButton = ({ label, onClick }: CollapsedPanelButtonProps) => (
+  <button
+    type="button"
+    className="self-end rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent shadow transition hover:bg-surface/90"
+    onClick={onClick}
+  >
+    Expand {label}
+  </button>
+);
+
 export const App = () => {
   useKeyboardShortcuts();
   const addPath = useWorkspaceStore((state) => state.addPath);
@@ -21,11 +36,12 @@ export const App = () => {
   const bootstrapped = useWorkspaceStore((state) => state.bootstrapped);
   const markBootstrapped = useWorkspaceStore((state) => state.markBootstrapped);
   const panelCollapse = useWorkspaceStore((state) => state.panelCollapse);
+  const setPanelCollapsed = useWorkspaceStore((state) => state.setPanelCollapsed);
 
   const rightColumnWidth = panelCollapse.oxidation && panelCollapse.grid
-    ? '200px'
+    ? 'max-content'
     : panelCollapse.oxidation || panelCollapse.grid
-      ? '260px'
+      ? '240px'
       : '320px';
 
   const gridStyle = { ['--right-column' as const]: rightColumnWidth } as CSSProperties;
@@ -69,9 +85,23 @@ export const App = () => {
             <ImportExportPanel />
           </div>
           <CanvasViewport />
-          <div className="flex flex-col gap-4">
-            <OxidationPanel />
-            <GridMirrorPanel />
+          <div className="flex flex-col items-stretch gap-4">
+            {panelCollapse.oxidation ? (
+              <CollapsedPanelButton
+                label="Oxidation"
+                onClick={() => setPanelCollapsed('oxidation', false)}
+              />
+            ) : (
+              <OxidationPanel />
+            )}
+            {panelCollapse.grid ? (
+              <CollapsedPanelButton
+                label="Grid"
+                onClick={() => setPanelCollapsed('grid', false)}
+              />
+            ) : (
+              <GridMirrorPanel />
+            )}
             <MeasurementPanel />
           </div>
         </main>
