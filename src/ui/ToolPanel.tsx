@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { clsx } from 'clsx';
 import { useWorkspaceStore } from '../state';
 import type { PathKind, ToolId } from '../types';
@@ -19,11 +20,16 @@ export const ToolPanel = () => {
   const activeTool = useWorkspaceStore((state) => state.activeTool);
   const setActiveTool = useWorkspaceStore((state) => state.setActiveTool);
   const duplicateSelectedPaths = useWorkspaceStore((state) => state.duplicateSelectedPaths);
-  const hasSelection = useWorkspaceStore((state) => state.selectedPathIds.length > 0);
-  const selectedPaths = useWorkspaceStore((state) =>
-    state.paths.filter((path) => state.selectedPathIds.includes(path.meta.id)),
-  );
+  const selectedPathIds = useWorkspaceStore((state) => state.selectedPathIds);
+  const paths = useWorkspaceStore((state) => state.paths);
   const setPathType = useWorkspaceStore((state) => state.setPathType);
+
+  const hasSelection = selectedPathIds.length > 0;
+
+  const selectedPaths = useMemo(
+    () => paths.filter((path) => selectedPathIds.includes(path.meta.id)),
+    [paths, selectedPathIds],
+  );
 
   const selectionState: PathKind | 'mixed' | null = (() => {
     if (!selectedPaths.length) return null;

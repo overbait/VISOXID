@@ -190,3 +190,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Canvas hit-tests skip reference paths for node/segment edits and handles never render for them. They can still be translated as a whole via `translatePaths`.
 - `runGeometryPipeline` zeros thickness/inner geometry for reference paths. If you create new entry points, make sure reference mode routes through this same guard before invoking the offset solver.
 - DXF import/export lives under `src/utils/dxf.ts`. The importer supports `LINE` and `LWPOLYLINE` entities, recentres everything to the 50 μm workspace, and maps the `REFERENCE` layer to the reference path kind. Keep exports using those same layers so round-trips remain lossless.
+
+## 2025-11-08 — Tool selector memoisation guard
+
+- Components should never subscribe to Zustand selectors that build new arrays or objects on every render; doing so trips React’s external-store guard and bricks the UI with an infinite update loop. Derive filtered selections with `useMemo` (fed by stable store slices) or provide a comparator when you need structural equality.
