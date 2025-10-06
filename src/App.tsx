@@ -58,6 +58,7 @@ export const App = () => {
             visible: true,
             locked: false,
             color: '#2563eb',
+            kind: 'oxided',
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },

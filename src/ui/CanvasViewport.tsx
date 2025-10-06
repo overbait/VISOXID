@@ -104,6 +104,7 @@ export const CanvasViewport = () => {
     const ordered = orderPathsBySelection(state.paths, state.selectedPathIds);
     const threshold = canvasDistanceToWorld(nodeHitThresholdPx, view);
     for (const path of ordered) {
+      if (path.meta.kind === 'reference') continue;
       for (const node of path.nodes) {
         if (distance(position, node.point) <= threshold) {
           return { kind: 'anchor', pathId: path.meta.id, nodeId: node.id };
@@ -148,6 +149,7 @@ export const CanvasViewport = () => {
     const state = useWorkspaceStore.getState();
     const threshold = canvasDistanceToWorld(pathHitThresholdPx, view);
     for (const path of state.paths) {
+      if (path.meta.kind === 'reference') continue;
       const { nodes } = path;
       const totalSegments = path.meta.closed ? nodes.length : nodes.length - 1;
       if (totalSegments < 1) continue;
@@ -178,6 +180,7 @@ export const CanvasViewport = () => {
     const threshold = canvasDistanceToWorld(pathHitThresholdPx, view);
     let closest: { sample: SamplePoint; distance: number } | null = null;
     for (const path of state.paths) {
+      if (path.meta.kind === 'reference') continue;
       const samples = path.sampled?.samples ?? [];
       for (const sample of samples) {
         const dist = distance(position, sample.position);
@@ -232,6 +235,7 @@ export const CanvasViewport = () => {
     }
 
     for (const path of state.paths) {
+      if (path.meta.kind === 'reference') continue;
       if (path.nodes.length !== 1) continue;
       const center = path.nodes[0].point;
       const delta = {
@@ -285,6 +289,10 @@ export const CanvasViewport = () => {
     const closeThreshold = canvasDistanceToWorld(nodeHitThresholdPx + 4, view);
     const segmentHit = hitTestSegment(position, view);
     if (segmentHit) {
+      const path = state.paths.find((entry) => entry.meta.id === segmentHit.pathId);
+      if (!path || path.meta.kind === 'reference') {
+        return;
+      }
       const newNode = {
         id: createId('node'),
         point: position,
@@ -317,6 +325,7 @@ export const CanvasViewport = () => {
             visible: true,
             locked: false,
             color: '#2563eb',
+            kind: 'oxided',
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },
@@ -420,6 +429,7 @@ export const CanvasViewport = () => {
           visible: true,
           locked: false,
           color: '#2563eb',
+          kind: 'oxided',
           createdAt: Date.now(),
           updatedAt: Date.now(),
         },
@@ -440,7 +450,11 @@ export const CanvasViewport = () => {
       }
       const segment = hitTestSegment(position, view);
       if (segment && event.detail >= 2) {
-        toggleSegmentCurve(segment.pathId, segment.segmentIndex);
+        const state = useWorkspaceStore.getState();
+        const path = state.paths.find((entry) => entry.meta.id === segment.pathId);
+        if (path?.meta.kind !== 'reference') {
+          toggleSegmentCurve(segment.pathId, segment.segmentIndex);
+        }
         setSelected([segment.pathId]);
         return;
       }

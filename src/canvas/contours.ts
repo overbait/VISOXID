@@ -66,15 +66,20 @@ export const drawContours = (
     return;
   }
 
-  const strokeColor = selected ? '#2563eb' : path.meta.color;
+  const isReference = path.meta.kind === 'reference';
+  const strokeColor = selected
+    ? '#2563eb'
+    : isReference
+      ? '#94a3b8'
+      : path.meta.color;
 
   const drawVariant = (points: Vec2[], emphasize: boolean) => {
     if (!points.length) return;
     const screenPoints = points.map((point) => worldToCanvas(point, view));
     if (!screenPoints.length) return;
     ctx.save();
-    ctx.globalAlpha = emphasize ? 1 : 0.45;
-    ctx.lineWidth = 1.8;
+    ctx.globalAlpha = emphasize ? 1 : isReference ? 0.35 : 0.45;
+    ctx.lineWidth = isReference ? 1.5 : 1.8;
     ctx.strokeStyle = strokeColor;
     ctx.setLineDash([]);
     strokePolyline(ctx, screenPoints, path.meta.closed);
@@ -208,7 +213,7 @@ export const drawOxidationDots = (
   mirror: MirrorSettings | undefined,
   visible: boolean,
 ): void => {
-  if (!visible) return;
+  if (!visible || path.meta.kind === 'reference') return;
   const samples = path.sampled?.samples;
   if (!samples?.length) return;
 

@@ -12,6 +12,7 @@ import type {
   StoredShape,
   ToolId,
   PanelCollapseState,
+  PathKind,
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
@@ -96,6 +97,7 @@ const loadLibrary = (): StoredShape[] => {
     const parsed = JSON.parse(raw) as StoredShape[];
     return parsed.map((shape) => ({
       ...shape,
+      pathType: (shape.pathType ?? 'oxided') as PathKind,
       nodes: shape.nodes.map((node) => ({ ...node })),
       oxidation: cloneOxidationSettings(shape.oxidation),
     }));
@@ -110,6 +112,7 @@ const persistLibrary = (library: StoredShape[]): void => {
   try {
     const serialisable = library.map((shape) => ({
       ...shape,
+      pathType: shape.pathType ?? 'oxided',
       nodes: shape.nodes.map((node) => ({ ...node })),
       oxidation: cloneOxidationSettings(shape.oxidation),
     }));
@@ -809,6 +812,7 @@ const clonePath = (path: PathEntity): PathEntity => ({
 
 const cloneStoredShape = (shape: StoredShape): StoredShape => ({
   ...shape,
+  pathType: shape.pathType ?? 'oxided',
   nodes: shape.nodes.map((node) => ({ ...node })),
   oxidation: cloneOxidationSettings(shape.oxidation),
 });
@@ -868,6 +872,7 @@ type WorkspaceActions = {
   zoomBy: (delta: number) => void;
   duplicateSelectedPaths: () => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
+  setPathType: (kind: PathKind) => void;
   setHoverProbe: (probe: MeasurementProbe | null) => void;
   setPinnedProbe: (probe: MeasurementProbe | null) => void;
   setDragProbe: (probe: MeasurementProbe | null) => void;
@@ -920,13 +925,19 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     mirrorSymmetry: path.oxidation.mirrorSymmetry,
     progress,
   };
-  const withThickness = evalThickness(normals, thicknessOptions);
+  const isReference = path.meta.kind === 'reference';
+  const withThickness = isReference
+    ? normals.map((sample) => ({ ...sample, thickness: 0 }))
+    : evalThickness(normals, thicknessOptions);
 
-  const { innerSamples, polygons } = deriveInnerGeometry(
-    withThickness,
-    path.meta.closed,
-    thicknessOptions,
-  );
+  let innerSamples: Vec2[] = [];
+  let polygons: Vec2[][] = [];
+
+  if (!isReference) {
+    const derived = deriveInnerGeometry(withThickness, path.meta.closed, thicknessOptions);
+    innerSamples = derived.innerSamples;
+    polygons = derived.polygons;
+  }
   const length = accumulateLength(withThickness);
   return {
     ...path,
@@ -994,16 +1005,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         visible: true,
         locked: false,
         color: overrides?.meta?.color ?? '#2563eb',
+        kind: overrides?.meta?.kind ?? 'oxided',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+      if (!meta.kind) {
+        meta.kind = 'oxided';
+      }
       const clonedNodes = nodes.map((node) => ({ ...node }));
       const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(
         clonedNodes,
         meta.closed,
       );
       const snapped = applyMirrorSnapping(mergedNodes, mirror);
-      const finalMeta = { ...meta, closed: meta.closed || closed };
+      const finalMeta = { ...meta, closed: meta.closed || closed, kind: meta.kind ?? 'oxided' };
       const newPath: PathEntity = runGeometryPipeline(
         {
           meta: finalMeta,
@@ -1035,6 +1050,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (index === -1) return state;
       const history = [...state.history, captureSnapshot(state)].slice(-50);
       const target = state.paths[index];
+      if (target.meta.kind === 'reference') {
+        return state;
+      }
       const nodes = updater(target.nodes.map((node) => ({ ...node })));
       const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(nodes, target.meta.closed);
       const snapped = applyMirrorSnapping(mergedNodes, mirror);
@@ -1081,19 +1099,35 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     });
   },
   setSelected: (ids) =>
-    set((state) => ({
-      selectedPathIds: ids,
-      nodeSelection:
-        state.nodeSelection && ids.includes(state.nodeSelection.pathId)
-          ? state.nodeSelection
-          : null,
-    })),
+    set((state) => {
+      let nextSelection: NodeSelection | null = null;
+      if (state.nodeSelection && ids.includes(state.nodeSelection.pathId)) {
+        const path = state.paths.find((entry) => entry.meta.id === state.nodeSelection?.pathId);
+        if (path && path.meta.kind !== 'reference') {
+          nextSelection = state.nodeSelection;
+        }
+      }
+      return {
+        selectedPathIds: ids,
+        nodeSelection: nextSelection,
+      };
+    }),
   setNodeSelection: (selection) =>
-    set(() => ({
-      nodeSelection: selection
-        ? { pathId: selection.pathId, nodeIds: [...selection.nodeIds] }
-        : null,
-    })),
+    set((state) => {
+      if (!selection) {
+        return { nodeSelection: null };
+      }
+      const path = state.paths.find((entry) => entry.meta.id === selection.pathId);
+      if (!path || path.meta.kind === 'reference') {
+        return { nodeSelection: null };
+      }
+      const allowed = new Set(path.nodes.map((node) => node.id));
+      const filtered = selection.nodeIds.filter((id) => allowed.has(id));
+      if (!filtered.length) {
+        return { nodeSelection: null };
+      }
+      return { nodeSelection: { pathId: selection.pathId, nodeIds: filtered } };
+    }),
   translatePaths: (pathIds, delta) =>
     set((state) => {
       if (!pathIds.length) return state;
@@ -1197,6 +1231,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pathIndex = state.paths.findIndex((path) => path.meta.id === selection.pathId);
       if (pathIndex === -1) return state;
       const path = state.paths[pathIndex];
+      if (path.meta.kind === 'reference') {
+        return state;
+      }
       const remainingNodes = path.nodes.filter((node) => !selection.nodeIds.includes(node.id));
       if (remainingNodes.length === path.nodes.length) {
         return state;
@@ -1230,6 +1267,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pathIndex = state.paths.findIndex((path) => path.meta.id === pathId);
       if (pathIndex === -1) return state;
       const path = state.paths[pathIndex];
+      if (path.meta.kind === 'reference') {
+        return state;
+      }
       const nodeIndex = path.nodes.findIndex((node) => node.id === nodeId);
       if (nodeIndex === -1) return state;
       const history = [...state.history, captureSnapshot(state)].slice(-50);
@@ -1349,6 +1389,45 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
       return { ...state, paths: nextPaths, dirty: true };
     }),
+  setPathType: (kind) =>
+    set((state) => {
+      if (!state.selectedPathIds.length) {
+        return state;
+      }
+      const ids = new Set(state.selectedPathIds);
+      let changed = false;
+      const snapshot = captureSnapshot(state);
+      const now = Date.now();
+      const nextPaths = state.paths.map((path) => {
+        if (!ids.has(path.meta.id)) {
+          return path;
+        }
+        if (path.meta.kind === kind) {
+          return path;
+        }
+        changed = true;
+        const meta = { ...path.meta, kind, updatedAt: now };
+        return runGeometryPipeline(
+          {
+            ...path,
+            meta,
+          },
+          state.oxidationProgress,
+        );
+      });
+      if (!changed) {
+        return state;
+      }
+      const history = [...state.history, snapshot].slice(-50);
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+        nodeSelection: null,
+      };
+    }),
   setHoverProbe: (probe) =>
     set((state) => ({
       measurements: { ...state.measurements, hoverProbe: probe },
@@ -1397,6 +1476,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         name: name.trim() || path.meta.name,
         nodes: path.nodes.map((node) => ({ ...node })),
         oxidation: cloneOxidationSettings(path.oxidation),
+        pathType: path.meta.kind ?? 'oxided',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -1433,6 +1513,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         visible: true,
         locked: false,
         color: '#2563eb',
+        kind: cloned.pathType ?? 'oxided',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },
@@ -1511,22 +1592,54 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     });
   },
   importState: (payload) =>
-    set((state) => ({
-      ...createEmptyState(state.library.map(cloneStoredShape)),
-      ...payload,
-      oxidationVisible: payload.oxidationVisible ?? true,
-      oxidationProgress: payload.oxidationProgress ?? 1,
-      oxidationDotCount: clampDotCount(payload.oxidationDotCount ?? DEFAULT_DOT_COUNT),
-      directionalLinking: payload.directionalLinking ?? true,
-      bootstrapped: payload.bootstrapped ?? true,
-      library: state.library.map(cloneStoredShape),
-      history: [],
-      future: [],
-      dirty: false,
-      zoom: clampZoom(payload.zoom ?? 1),
-      pan: payload.pan ?? { x: 0, y: 0 },
-      panelCollapse: normalizePanelCollapse(payload.panelCollapse),
-    })),
+    set((state) => {
+      const sanitizedProgress = clamp(payload.oxidationProgress ?? 1, 0, 1);
+      const rehydratedPaths = (payload.paths ?? []).map((path) =>
+        runGeometryPipeline(
+          {
+            ...path,
+            nodes: path.nodes.map((node) => ({ ...node })),
+            oxidation: cloneOxidationSettings(path.oxidation),
+            meta: { ...path.meta, kind: (path.meta.kind ?? 'oxided') as PathKind },
+            sampled: undefined,
+          },
+          sanitizedProgress,
+        ),
+      );
+      const existingIds = new Set(rehydratedPaths.map((path) => path.meta.id));
+      const selectedPathIds = (payload.selectedPathIds ?? []).filter((id) => existingIds.has(id));
+      let nodeSelection: NodeSelection | null = null;
+      if (payload.nodeSelection) {
+        const target = rehydratedPaths.find((path) => path.meta.id === payload.nodeSelection?.pathId);
+        if (target && target.meta.kind !== 'reference') {
+          const allowed = new Set(target.nodes.map((node) => node.id));
+          const filtered = payload.nodeSelection.nodeIds.filter((id) => allowed.has(id));
+          if (filtered.length) {
+            nodeSelection = { pathId: target.meta.id, nodeIds: filtered };
+          }
+        }
+      }
+      const base = createEmptyState(state.library.map(cloneStoredShape));
+      return {
+        ...base,
+        ...payload,
+        paths: rehydratedPaths,
+        selectedPathIds,
+        nodeSelection,
+        oxidationVisible: payload.oxidationVisible ?? true,
+        oxidationProgress: sanitizedProgress,
+        oxidationDotCount: clampDotCount(payload.oxidationDotCount ?? DEFAULT_DOT_COUNT),
+        directionalLinking: payload.directionalLinking ?? true,
+        bootstrapped: payload.bootstrapped ?? true,
+        library: state.library.map(cloneStoredShape),
+        history: [],
+        future: [],
+        dirty: false,
+        zoom: clampZoom(payload.zoom ?? 1),
+        pan: payload.pan ?? { x: 0, y: 0 },
+        panelCollapse: normalizePanelCollapse(payload.panelCollapse),
+      };
+    }),
   reset: () =>
     set((state) => ({
       ...createEmptyState(state.library.map(cloneStoredShape)),
@@ -1538,6 +1651,9 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const pathIndex = state.paths.findIndex((path) => path.meta.id === pathId);
       if (pathIndex === -1) return state;
       const path = state.paths[pathIndex];
+      if (path.meta.kind === 'reference') {
+        return state;
+      }
       const totalSegments = path.meta.closed ? path.nodes.length : path.nodes.length - 1;
       if (segmentIndex < 0 || segmentIndex >= totalSegments) {
         return state;

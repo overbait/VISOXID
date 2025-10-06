@@ -105,6 +105,7 @@ export const ScenePanel = () => {
                 visible: true,
                 locked: false,
                 color: '#2563eb',
+                kind: 'reference',
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
               },
@@ -114,7 +115,7 @@ export const ScenePanel = () => {
           Add reference circle
         </button>
       </div>
-      {selectedPath && activeNode && (
+      {selectedPath && activeNode && selectedPath.meta.kind !== 'reference' && (
         <div className="flex flex-col gap-3 rounded-2xl border border-dashed border-border/70 bg-white/70 p-3 text-xs text-muted">
           <div className="text-[11px] uppercase tracking-wide text-muted">Selected node</div>
           <div className="flex justify-between text-[11px] font-semibold text-text">

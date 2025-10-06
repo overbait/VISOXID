@@ -1,5 +1,7 @@
 export type ToolId = 'select' | 'line' | 'dot' | 'measure' | 'pan' | 'erase';
 
+export type PathKind = 'oxided' | 'reference';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -32,6 +34,7 @@ export interface PathMeta {
   visible: boolean;
   locked: boolean;
   color: string;
+  kind: PathKind;
   createdAt: number;
   updatedAt: number;
 }
@@ -71,6 +74,7 @@ export interface StoredShape {
   name: string;
   nodes: PathNode[];
   oxidation: OxidationSettings;
+  pathType: PathKind;
   createdAt: number;
   updatedAt: number;
 }

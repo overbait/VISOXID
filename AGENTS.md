@@ -183,3 +183,10 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Legacy snapshots may still carry `panelCollapse.oxidation/grid`; reuse `normalizePanelCollapse` when touching history/import logic so they migrate cleanly.
 - The compass inspector swaps the old helper text for an “Export PNG” button that currently fires an info toast via `pushWarning`. Wire the actual export routine through this button in future changes.
 - App bootstrap now guards the demo circle seeding with a ref so StrictMode’s double effects don’t spawn duplicate geometry. Keep this sentinel in place if you refactor startup flows.
+
+## 2025-11-07 — DXF interchange & reference geometry mode
+
+- Paths now carry a `meta.kind` (`'oxided'` | `'reference'`). Reference paths act as grey, non-oxidised guides: no dots, no thickness evaluation, and no per-node editing. Use `setPathType` to flip modes so undo/redo and geometry recomputation stay in sync.
+- Canvas hit-tests skip reference paths for node/segment edits and handles never render for them. They can still be translated as a whole via `translatePaths`.
+- `runGeometryPipeline` zeros thickness/inner geometry for reference paths. If you create new entry points, make sure reference mode routes through this same guard before invoking the offset solver.
+- DXF import/export lives under `src/utils/dxf.ts`. The importer supports `LINE` and `LWPOLYLINE` entities, recentres everything to the 50 μm workspace, and maps the `REFERENCE` layer to the reference path kind. Keep exports using those same layers so round-trips remain lossless.
