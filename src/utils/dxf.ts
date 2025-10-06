@@ -14,6 +14,8 @@ interface ParsedDXFShape {
 
 const WORKSPACE_SIZE = 50;
 const WORKSPACE_CENTER = { x: WORKSPACE_SIZE / 2, y: WORKSPACE_SIZE / 2 } as const;
+const DEGREES_TO_RADIANS = Math.PI / 180;
+const TAU = Math.PI * 2;
 
 const parseNumber = (value: string): number => {
   const parsed = Number.parseFloat(value);
@@ -172,6 +174,141 @@ const parseLwpolylineEntity = (
   };
 };
 
+const sampleArcPoints = (
+  center: Vec2,
+  radius: number,
+  startAngle: number,
+  sweep: number,
+  closed: boolean,
+): Vec2[] => {
+  const fraction = Math.min(1, Math.max(sweep / TAU, 0));
+  const baseSegments = 64;
+  const minimum = closed ? 16 : 8;
+  const segments = Math.max(minimum, Math.ceil(fraction * baseSegments));
+  const points: Vec2[] = [];
+  if (closed) {
+    for (let i = 0; i < segments; i += 1) {
+      const angle = startAngle + (sweep * i) / segments;
+      points.push({
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius,
+      });
+    }
+  } else {
+    for (let i = 0; i <= segments; i += 1) {
+      const angle = startAngle + (sweep * i) / segments;
+      points.push({
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius,
+      });
+    }
+  }
+  return points;
+};
+
+const parseArcEntity = (
+  tokens: Array<{ code: number; value: string }>,
+  startIndex: number,
+): { entity: RawDXFEntity | null; nextIndex: number } => {
+  let centerX: number | null = null;
+  let centerY: number | null = null;
+  let radius: number | null = null;
+  let startAngleDeg: number | null = null;
+  let endAngleDeg: number | null = null;
+  let layer: string | undefined;
+  let index = startIndex;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token.code === 0) break;
+    switch (token.code) {
+      case 8:
+        layer = token.value.trim();
+        break;
+      case 10:
+        centerX = parseNumber(token.value);
+        break;
+      case 20:
+        centerY = parseNumber(token.value);
+        break;
+      case 40:
+        radius = parseNumber(token.value);
+        break;
+      case 50:
+        startAngleDeg = parseNumber(token.value);
+        break;
+      case 51:
+        endAngleDeg = parseNumber(token.value);
+        break;
+      default:
+        break;
+    }
+    index += 1;
+  }
+  if (centerX === null || centerY === null || radius === null || radius <= 0) {
+    return { entity: null, nextIndex: index };
+  }
+  const start = (startAngleDeg ?? 0) * DEGREES_TO_RADIANS;
+  const end = (endAngleDeg ?? startAngleDeg ?? 0) * DEGREES_TO_RADIANS;
+  let sweep = end - start;
+  if (!Number.isFinite(sweep) || Math.abs(sweep) < 1e-9) {
+    sweep = TAU;
+  }
+  while (sweep <= 0) {
+    sweep += TAU;
+  }
+  return {
+    entity: {
+      points: sampleArcPoints({ x: centerX, y: centerY }, radius, start, sweep, false),
+      closed: false,
+      layer,
+    },
+    nextIndex: index,
+  };
+};
+
+const parseCircleEntity = (
+  tokens: Array<{ code: number; value: string }>,
+  startIndex: number,
+): { entity: RawDXFEntity | null; nextIndex: number } => {
+  let centerX: number | null = null;
+  let centerY: number | null = null;
+  let radius: number | null = null;
+  let layer: string | undefined;
+  let index = startIndex;
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (token.code === 0) break;
+    switch (token.code) {
+      case 8:
+        layer = token.value.trim();
+        break;
+      case 10:
+        centerX = parseNumber(token.value);
+        break;
+      case 20:
+        centerY = parseNumber(token.value);
+        break;
+      case 40:
+        radius = parseNumber(token.value);
+        break;
+      default:
+        break;
+    }
+    index += 1;
+  }
+  if (centerX === null || centerY === null || radius === null || radius <= 0) {
+    return { entity: null, nextIndex: index };
+  }
+  return {
+    entity: {
+      points: sampleArcPoints({ x: centerX, y: centerY }, radius, 0, TAU, true),
+      closed: true,
+      layer,
+    },
+    nextIndex: index,
+  };
+};
+
 const parseEntities = (tokens: Array<{ code: number; value: string }>): RawDXFEntity[] => {
   const entities: RawDXFEntity[] = [];
   let inEntities = false;
@@ -210,6 +347,26 @@ const parseEntities = (tokens: Array<{ code: number; value: string }>): RawDXFEn
     }
     if (type === 'LWPOLYLINE') {
       const { entity, nextIndex } = parseLwpolylineEntity(tokens, i + 1);
+      if (entity) {
+        entities.push(entity);
+      }
+      if (nextIndex > i) {
+        i = nextIndex - 1;
+      }
+      continue;
+    }
+    if (type === 'ARC') {
+      const { entity, nextIndex } = parseArcEntity(tokens, i + 1);
+      if (entity) {
+        entities.push(entity);
+      }
+      if (nextIndex > i) {
+        i = nextIndex - 1;
+      }
+      continue;
+    }
+    if (type === 'CIRCLE') {
+      const { entity, nextIndex } = parseCircleEntity(tokens, i + 1);
       if (entity) {
         entities.push(entity);
       }

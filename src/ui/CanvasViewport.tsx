@@ -20,7 +20,7 @@ type DragTarget =
 const nodeHitThresholdPx = 12;
 const pathHitThresholdPx = 10;
 const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 8;
+const MAX_ZOOM = 4;
 const ZOOM_STEP = 1.1;
 
 const pointSegmentDistance = (p: Vec2, a: Vec2, b: Vec2): number => {
@@ -69,7 +69,7 @@ export const CanvasViewport = () => {
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
 
-  const canvasWidthClass = rightSidebarCollapsed ? 'max-w-[1080px]' : 'max-w-[760px]';
+  const canvasWidthClass = rightSidebarCollapsed ? 'max-w-[1080px]' : 'max-w-none';
 
   useEffect(() => {
     const canvas = canvasRef.current;

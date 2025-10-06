@@ -194,3 +194,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-11-08 — Tool selector memoisation guard
 
 - Components should never subscribe to Zustand selectors that build new arrays or objects on every render; doing so trips React’s external-store guard and bricks the UI with an infinite update loop. Derive filtered selections with `useMemo` (fed by stable store slices) or provide a comparator when you need structural equality.
+
+## 2025-11-09 — Path kind inspector & DXF arc sampling
+
+- The path type selector now lives on the right rail beneath the Oxidation card. Keep its mixed-selection banner and reuse `setPathType` so undo/redo and the geometry pipeline stay consistent when flipping modes.
+- DXF import now approximates `ARC` and `CIRCLE` entities into polylines (64 segments for a full circle). Preserve this conversion so guides from AutoCAD round-trip without manual edits, and keep centring the result in the 50 μm workspace before adding paths.
+- The canvas centre column no longer hard-limits its width when the sidebar is expanded, ensuring the gap matches the left rail, and zoom tops out at ×4. Honour these bounds when adjusting layout or viewport behaviour.
