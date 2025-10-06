@@ -14,7 +14,9 @@ export const ToolPanel = () => {
   const activeTool = useWorkspaceStore((state) => state.activeTool);
   const setActiveTool = useWorkspaceStore((state) => state.setActiveTool);
   const duplicateSelectedPaths = useWorkspaceStore((state) => state.duplicateSelectedPaths);
-  const hasSelection = useWorkspaceStore((state) => state.selectedPathIds.length > 0);
+  const selectedPathIds = useWorkspaceStore((state) => state.selectedPathIds);
+
+  const hasSelection = selectedPathIds.length > 0;
 
   return (
     <div className="panel flex flex-col gap-3 p-4">

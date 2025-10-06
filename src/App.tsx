@@ -2,12 +2,13 @@ import { useEffect, useRef, type CSSProperties } from 'react';
 import { CanvasViewport } from './ui/CanvasViewport';
 import { DirectionalCompass } from './ui/DirectionalCompass';
 import { ToolPanel } from './ui/ToolPanel';
-import { ScenePanel } from './ui/ScenePanel';
 import { OxidationPanel } from './ui/OxidationPanel';
 import { GridMirrorPanel } from './ui/GridMirrorPanel';
 import { MeasurementPanel } from './ui/MeasurementPanel';
 import { StatusBar } from './ui/StatusBar';
 import { ImportExportPanel } from './ui/ImportExportPanel';
+import { ScenePanel } from './ui/ScenePanel';
+import { PathTypePanel } from './ui/PathTypePanel';
 import { useKeyboardShortcuts } from './ui/useKeyboardShortcuts';
 import { useWorkspaceStore } from './state';
 import { createId } from './utils/ids';
@@ -58,6 +59,7 @@ export const App = () => {
             visible: true,
             locked: false,
             color: '#2563eb',
+            kind: 'oxided',
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },
@@ -84,8 +86,8 @@ export const App = () => {
           <div className="flex flex-col gap-4">
             <DirectionalCompass />
             <ToolPanel />
-            <ScenePanel />
             <ImportExportPanel />
+            <ScenePanel />
           </div>
           <CanvasViewport />
           <div className="flex flex-col items-stretch gap-4">
@@ -96,6 +98,7 @@ export const App = () => {
             {!rightCollapsed && (
               <>
                 <OxidationPanel />
+                <PathTypePanel />
                 <GridMirrorPanel />
                 <MeasurementPanel />
               </>

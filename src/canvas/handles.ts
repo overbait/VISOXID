@@ -8,7 +8,7 @@ export const drawHandles = (
   view: ViewTransform,
   nodeSelection: NodeSelection | null,
 ): void => {
-  if (!selected) return;
+  if (!selected || path.meta.kind === 'reference') return;
   ctx.save();
   ctx.strokeStyle = 'rgba(37, 99, 235, 0.35)';
   ctx.fillStyle = '#2563eb';
