@@ -218,8 +218,3 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `drawOxidationDots` now clips each rendered dot against its closed contour so the exterior half stays invisible. When touching this overlay, keep the per-variant canvas `clip()` guard so mirrored paths inherit the same masking without leaking across shapes.
 - Only closed paths provide a clip polygon; open traces still render the full dot glyph. Preserve this distinction so open-line previews keep showing both sides of the stroke.
 
-## 2025-11-13 — Rotation tool & oval reference guides
-
-- A dedicated Rotate tool now spins the active selection around its average anchor position. Pointer drags accumulate the delta angle and snap to 10° increments; call `rotatePaths` with the snapped delta rather than rewriting node coordinates directly so history entries and oxidation recomputation stay in sync.
-- Locked paths are ignored during a rotation session, matching translation behaviour. If no unlocked paths are selected the tool remains idle—keep this guard in place to avoid accidental transforms.
-- “Add reference circle” can optionally output an oval. The checkbox exposes a horizontal stretch slider (50–200 % of the entered diameter); reuse the stretch helper so the Bézier handles scale with the anchors and keep the generated name in the `Reference oval (V×H μm)` format for library parity.
