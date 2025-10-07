@@ -8,6 +8,7 @@ const tools: Array<{ id: ToolId; label: string; shortcut: string }> = [
   { id: 'dot', label: 'Dot', shortcut: 'D' },
   { id: 'measure', label: 'Measure', shortcut: 'M' },
   { id: 'pan', label: 'Pan', shortcut: 'Space' },
+  { id: 'rotate', label: 'Rotate', shortcut: 'R' },
 ];
 
 export const ToolPanel = () => {

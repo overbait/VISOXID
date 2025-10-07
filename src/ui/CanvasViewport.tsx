@@ -57,6 +57,7 @@ export const CanvasViewport = () => {
   const setSelected = useWorkspaceStore((state) => state.setSelected);
   const setNodeSelection = useWorkspaceStore((state) => state.setNodeSelection);
   const translatePaths = useWorkspaceStore((state) => state.translatePaths);
+  const rotatePaths = useWorkspaceStore((state) => state.rotatePaths);
   const updatePath = useWorkspaceStore((state) => state.updatePath);
   const addPath = useWorkspaceStore((state) => state.addPath);
   const setPathMeta = useWorkspaceStore((state) => state.setPathMeta);
@@ -84,6 +85,13 @@ export const CanvasViewport = () => {
     originWorld: Vec2;
     originCanvas: Vec2;
     additive: boolean;
+  } | null>(null);
+  const rotateSession = useRef<{
+    pathIds: string[];
+    center: Vec2;
+    prevPointerAngle: number;
+    accumulated: number;
+    applied: number;
   } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
   const [selectionBoxRect, setSelectionBoxRect] = useState<SelectionBoxRect | null>(null);
@@ -502,6 +510,47 @@ export const CanvasViewport = () => {
       setNodeSelection({ pathId, nodeIds: [node.id] });
       return;
     }
+    if (activeTool === 'rotate') {
+      const state = useWorkspaceStore.getState();
+      const selected = state.selectedPathIds.filter((id) => {
+        const path = state.paths.find((entry) => entry.meta.id === id);
+        return path && !path.meta.locked;
+      });
+      if (!selected.length) {
+        return;
+      }
+      const points: Vec2[] = [];
+      selected.forEach((id) => {
+        const path = state.paths.find((entry) => entry.meta.id === id);
+        if (!path) return;
+        path.nodes.forEach((node) => {
+          points.push(node.point);
+        });
+      });
+      if (!points.length) {
+        return;
+      }
+      const sum = points.reduce(
+        (acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }),
+        { x: 0, y: 0 },
+      );
+      const center = { x: sum.x / points.length, y: sum.y / points.length };
+      const vector = { x: position.x - center.x, y: position.y - center.y };
+      const radius = Math.hypot(vector.x, vector.y);
+      if (radius <= 1e-6) {
+        return;
+      }
+      const angle = Math.atan2(vector.y, vector.x);
+      rotateSession.current = {
+        pathIds: selected,
+        center,
+        prevPointerAngle: angle,
+        accumulated: 0,
+        applied: 0,
+      };
+      canvasRef.current?.setPointerCapture(event.pointerId);
+      return;
+    }
     if (activeTool === 'select') {
       const target = hitTestNodes(position, view);
       if (target) {
@@ -647,6 +696,27 @@ export const CanvasViewport = () => {
       }
       return;
     }
+    if (activeTool === 'rotate') {
+      if (rotateSession.current) {
+        const session = rotateSession.current;
+        const vector = { x: position.x - session.center.x, y: position.y - session.center.y };
+        const radius = Math.hypot(vector.x, vector.y);
+        if (radius > 1e-6) {
+          const angle = Math.atan2(vector.y, vector.x);
+          let deltaDeg = toDegrees(angle - session.prevPointerAngle);
+          while (deltaDeg <= -180) deltaDeg += 360;
+          while (deltaDeg > 180) deltaDeg -= 360;
+          session.accumulated += deltaDeg;
+          session.prevPointerAngle = angle;
+          const snapped = Math.round(session.accumulated / 10) * 10;
+          if (snapped !== session.applied) {
+            rotatePaths(session.pathIds, session.center, snapped - session.applied);
+            session.applied = snapped;
+          }
+        }
+      }
+      return;
+    }
     if (activeTool === 'select') {
       if (boxSelection.current) {
         const origin = boxSelection.current.originCanvas;
@@ -710,6 +780,11 @@ export const CanvasViewport = () => {
       if (event.type === 'pointerleave') {
         setHoverProbe(null);
       }
+      canvasRef.current?.releasePointerCapture(event.pointerId);
+      return;
+    }
+    if (activeTool === 'rotate') {
+      rotateSession.current = null;
       canvasRef.current?.releasePointerCapture(event.pointerId);
       return;
     }
@@ -808,6 +883,9 @@ export const CanvasViewport = () => {
     }
     if (activeTool !== 'pan') {
       panSession.current = null;
+    }
+    if (activeTool !== 'rotate') {
+      rotateSession.current = null;
     }
   }, [activeTool]);
 

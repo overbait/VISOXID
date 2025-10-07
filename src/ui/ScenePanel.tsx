@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
 import { createCircleNodes } from '../utils/presets';
+import type { Vec2 } from '../types';
 
 export const ScenePanel = () => {
   const selectedPathIds = useWorkspaceStore((state) => state.selectedPathIds);
@@ -24,6 +25,8 @@ export const ScenePanel = () => {
   const scenes = useWorkspaceStore((state) => state.scenes);
   const [saveName, setSaveName] = useState('');
   const [referenceCircleDiameter, setReferenceCircleDiameter] = useState('36');
+  const [referenceOvalEnabled, setReferenceOvalEnabled] = useState(false);
+  const [referenceOvalScale, setReferenceOvalScale] = useState(1);
   const [shapeRenameDrafts, setShapeRenameDrafts] = useState<Record<string, string>>({});
   const [sceneRenameDrafts, setSceneRenameDrafts] = useState<Record<string, string>>({});
 
@@ -82,10 +85,33 @@ export const ScenePanel = () => {
     const radius = diameter / 2;
     const normalized = Math.round(diameter * 10) / 10;
     const label = Number.isInteger(normalized) ? normalized.toFixed(0) : normalized.toFixed(1);
-    addPath(createCircleNodes({ x: 25, y: 25 }, radius), {
+    const center = { x: 25, y: 25 };
+    let nodes = createCircleNodes(center, radius);
+    let name = `Reference circle (${label} μm)`;
+    if (referenceOvalEnabled) {
+      const scale = Number.isFinite(referenceOvalScale) && referenceOvalScale > 0 ? referenceOvalScale : 1;
+      const stretch = (point: Vec2 | null | undefined): Vec2 | null | undefined => {
+        if (!point) return point ?? null;
+        const dx = point.x - center.x;
+        return { x: center.x + dx * scale, y: point.y };
+      };
+      nodes = nodes.map((node) => ({
+        ...node,
+        point: stretch(node.point)!,
+        handleIn: stretch(node.handleIn),
+        handleOut: stretch(node.handleOut),
+      }));
+      const horizontalDiameter = diameter * scale;
+      const normalizedHorizontal = Math.round(horizontalDiameter * 10) / 10;
+      const horizontalLabel = Number.isInteger(normalizedHorizontal)
+        ? normalizedHorizontal.toFixed(0)
+        : normalizedHorizontal.toFixed(1);
+      name = `Reference oval (${label}×${horizontalLabel} μm)`;
+    }
+    addPath(nodes, {
       meta: {
         id: createId('path'),
-        name: `Reference circle (${label} μm)`,
+        name,
         closed: true,
         visible: true,
         locked: false,
@@ -150,6 +176,44 @@ export const ScenePanel = () => {
             className="rounded-xl border border-border bg-white/80 px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
           />
         </label>
+        <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted">
+          <input
+            type="checkbox"
+            checked={referenceOvalEnabled}
+            onChange={(event) => {
+              setReferenceOvalEnabled(event.target.checked);
+              if (!event.target.checked) {
+                setReferenceOvalScale(1);
+              }
+            }}
+            className="h-4 w-4 rounded border border-border"
+          />
+          <span>Convert to oval</span>
+        </label>
+        {referenceOvalEnabled && (
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] uppercase tracking-wide text-muted">
+              Horizontal diameter (
+              {Number.isFinite(Number.parseFloat(referenceCircleDiameter))
+                ? `${(Number.parseFloat(referenceCircleDiameter) * referenceOvalScale).toFixed(1)} μm`
+                : '—'}
+              )
+            </span>
+            <input
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.05}
+              value={referenceOvalScale}
+              onChange={(event) => setReferenceOvalScale(Number(event.target.value))}
+              className="accent-accent"
+            />
+            <div className="flex justify-between text-[10px] text-muted">
+              <span>50%</span>
+              <span>200%</span>
+            </div>
+          </label>
+        )}
       </div>
       {selectedPath && activeNode && selectedPath.meta.kind !== 'reference' && (
         <div className="flex flex-col gap-3 rounded-2xl border border-dashed border-border/70 bg-white/70 p-3 text-xs text-muted">

@@ -217,3 +217,4 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `drawOxidationDots` now clips each rendered dot against its closed contour so the exterior half stays invisible. When touching this overlay, keep the per-variant canvas `clip()` guard so mirrored paths inherit the same masking without leaking across shapes.
 - Only closed paths provide a clip polygon; open traces still render the full dot glyph. Preserve this distinction so open-line previews keep showing both sides of the stroke.
+
