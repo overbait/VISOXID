@@ -20,9 +20,10 @@ const clamp01 = (value: number): number => {
 };
 
 const clampThickness = (value: number): number => {
-  if (value < 0) return 0;
-  if (value > 10) return 10;
-  return value;
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, value);
 };
 
 const normalizeAngle = (angle: number): number => {

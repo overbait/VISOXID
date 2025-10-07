@@ -264,3 +264,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Directional thickness inputs no longer clamp at 10 μm; treat every non-negative value as valid and avoid reintroducing hard maximums in the store or compass editor. The preview spokes should continue to grow proportionally beyond the original compass boundary.
 - Oxidation preview dots now default to 130 and the Oxidation panel no longer exposes the mirror symmetry checkbox. Leave the new default in place when seeding state or resetting the workspace.
 
+## 2025-11-21 — Compass evaluation ceiling removal
+
+- `evalThickness`/`evalThicknessForAngle` now respect the unlimited directional values. Don’t restore the old 10 μm clamp inside `src/geometry/thickness.ts`; the compass preview and geometry pipeline rely on the full range.
+
