@@ -243,3 +243,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Saved export measurements render distance-only callouts on the canvas. When extending measurement drawing, keep export mode hiding labels/angles for saved entries so captures stay clean.
 - Scene library entries can be exported/imported as JSON bundles. Use `handleSceneExport`/`importSceneToLibrary` for new entry points so the `{ version: 1, scene }` payload remains consistent and sanitisation stays centralised.
 
+## 2025-11-17 — Dev server helper script
+
+- A `start-dev.sh` script now bootstraps dependencies (if `node_modules` is missing), launches `npm run dev` with overridable `HOST`/`PORT`, waits for the server to respond, and opens the workspace URL in the default browser. It streams logs until you exit; feel free to pass extra Vite flags via `VITE_DEV_ARGS`.
+
