@@ -1,4 +1,4 @@
-import type { MeasurementProbe, MeasurementState } from '../types';
+import type { ExportMeasurement, MeasurementProbe, MeasurementState } from '../types';
 import { toDegrees } from '../utils/math';
 import { worldToCanvas, type ViewTransform } from './viewTransform';
 
@@ -6,9 +6,17 @@ export const drawMeasurements = (
   ctx: CanvasRenderingContext2D,
   measurements: MeasurementState,
   view: ViewTransform,
+  saved: ExportMeasurement[] = [],
 ): void => {
   ctx.save();
-  const entries: Array<{ probe: MeasurementProbe; tone: 'pinned' | 'drag' | 'hover' }> = [];
+  const entries: Array<
+    {
+      probe: MeasurementProbe;
+      tone: 'pinned' | 'drag' | 'hover' | 'saved';
+      color?: string;
+      label?: string;
+    }
+  > = [];
   if (measurements.pinnedProbe) {
     entries.push({ probe: measurements.pinnedProbe, tone: 'pinned' });
   }
@@ -18,17 +26,24 @@ export const drawMeasurements = (
   if (measurements.dragProbe) {
     entries.push({ probe: measurements.dragProbe, tone: 'drag' });
   }
-  entries.forEach(({ probe, tone }) => {
+  saved.forEach((entry) => {
+    entries.push({ probe: entry.probe, tone: 'saved', color: entry.color, label: entry.label });
+  });
+  entries.forEach(({ probe, tone, color, label }) => {
     const aScreen = worldToCanvas(probe.a, view);
     const bScreen = worldToCanvas(probe.b, view);
     ctx.beginPath();
     ctx.setLineDash([]);
     ctx.lineWidth = tone === 'drag' ? 2 : 1.5;
     if (tone === 'hover') {
-      ctx.strokeStyle = 'rgba(37, 99, 235, 0.45)';
+      ctx.strokeStyle = 'rgba(30, 64, 175, 0.45)';
       ctx.setLineDash([6, 4]);
+    } else if (tone === 'saved') {
+      ctx.strokeStyle = color ?? '#1e3a8a';
+      ctx.setLineDash([]);
+      ctx.lineWidth = 2;
     } else {
-      ctx.strokeStyle = '#2563eb';
+      ctx.strokeStyle = '#1e3a8a';
     }
     ctx.moveTo(aScreen.x, aScreen.y);
     ctx.lineTo(bScreen.x, bScreen.y);
@@ -38,7 +53,10 @@ export const drawMeasurements = (
     const distanceLabel = `${probe.distance.toFixed(2)} μm`;
     const angleLabel = `${toDegrees(Math.atan2(probe.b.y - probe.a.y, probe.b.x - probe.a.x)).toFixed(1)}°`;
     const toneVariant = tone === 'hover' ? 'subtle' : 'strong';
-    drawLabel(ctx, midX, midY, `${distanceLabel} • ${angleLabel}`, toneVariant);
+    const text = tone === 'saved'
+      ? `${label ?? ''} • ${distanceLabel} • ${angleLabel}`.replace(/^\s*•\s*/, '')
+      : `${distanceLabel} • ${angleLabel}`;
+    drawLabel(ctx, midX, midY, text, toneVariant, tone === 'saved' ? color : undefined);
   });
   ctx.restore();
 };
@@ -49,6 +67,7 @@ const drawLabel = (
   y: number,
   text: string,
   tone: 'strong' | 'subtle',
+  accentColor?: string,
 ) => {
   ctx.save();
   ctx.font = '12px Inter, sans-serif';
@@ -56,8 +75,9 @@ const drawLabel = (
   const textMetrics = ctx.measureText(text);
   const width = textMetrics.width + padding * 2;
   const height = 20;
+  const accent = accentColor ?? '#1e3a8a';
   ctx.fillStyle = tone === 'strong' ? 'rgba(15, 23, 42, 0.85)' : 'rgba(148, 163, 184, 0.85)';
-  ctx.strokeStyle = tone === 'strong' ? 'rgba(255, 255, 255, 0.8)' : 'rgba(226, 232, 240, 0.9)';
+  ctx.strokeStyle = tone === 'strong' ? accent : 'rgba(226, 232, 240, 0.9)';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.roundRect(x - width / 2, y - height / 2, width, height, 10);
