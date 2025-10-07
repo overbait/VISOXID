@@ -155,6 +155,7 @@ export const ScenePanel = () => {
         locked: false,
         color: '#2563eb',
         kind: 'reference',
+        oxidationDirection: 'inward',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },

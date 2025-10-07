@@ -49,8 +49,19 @@ export const drawMeasurements = (
     ctx.moveTo(aScreen.x, aScreen.y);
     ctx.lineTo(bScreen.x, bScreen.y);
     ctx.stroke();
-    const midX = (aScreen.x + bScreen.x) / 2;
-    const midY = (aScreen.y + bScreen.y) / 2;
+    const dx = bScreen.x - aScreen.x;
+    const dy = bScreen.y - aScreen.y;
+    const length = Math.hypot(dx, dy);
+    let labelX = aScreen.x + 18;
+    let labelY = aScreen.y - 18;
+    if (length > 1e-3) {
+      const ux = dx / length;
+      const uy = dy / length;
+      const lateral = 12;
+      const along = Math.min(Math.max(length * 0.25, 18), 42);
+      labelX = aScreen.x + ux * along - uy * lateral;
+      labelY = aScreen.y + uy * along + ux * lateral;
+    }
     const distanceLabel = `${probe.distance.toFixed(2)} μm`;
     const angleLabel = `${toDegrees(Math.atan2(probe.b.y - probe.a.y, probe.b.x - probe.a.x)).toFixed(1)}°`;
     const toneVariant = tone === 'hover' ? 'subtle' : 'strong';
@@ -59,7 +70,7 @@ export const drawMeasurements = (
         ? distanceLabel
         : `${label ?? ''} • ${distanceLabel} • ${angleLabel}`.replace(/^\s*•\s*/, '')
       : `${distanceLabel} • ${angleLabel}`;
-    drawLabel(ctx, midX, midY, text, toneVariant, tone === 'saved' ? color : undefined);
+    drawLabel(ctx, labelX, labelY, text, toneVariant, tone === 'saved' ? color : undefined);
   });
   ctx.restore();
 };

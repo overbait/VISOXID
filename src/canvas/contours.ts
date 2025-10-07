@@ -231,6 +231,7 @@ export const drawOxidationDots = (
   if (dotPolygon.length < 3) return;
 
   const transforms = createMirrorTransforms(mirror);
+  const direction = path.meta.oxidationDirection ?? 'inward';
 
   const drawWorldPolygon = (points: Vec2[], clipScreen?: Vec2[]) => {
     const screenPoints = points.map((point) => worldToCanvas(point, view));
@@ -238,12 +239,21 @@ export const drawOxidationDots = (
     ctx.save();
     if (clipScreen && clipScreen.length >= 3) {
       ctx.beginPath();
+      if (direction === 'outward') {
+        const matrix = ctx.getTransform();
+        const scaleX = matrix.a || 1;
+        const scaleY = matrix.d || 1;
+        const width = ctx.canvas.width / scaleX;
+        const height = ctx.canvas.height / scaleY;
+        const pad = Math.max(width, height);
+        ctx.rect(-pad, -pad, width + pad * 2, height + pad * 2);
+      }
       ctx.moveTo(clipScreen[0].x, clipScreen[0].y);
       for (let i = 1; i < clipScreen.length; i += 1) {
         ctx.lineTo(clipScreen[i].x, clipScreen[i].y);
       }
       ctx.closePath();
-      ctx.clip();
+      ctx.clip(direction === 'outward' ? 'evenodd' : 'nonzero');
     }
     ctx.beginPath();
     ctx.moveTo(screenPoints[0].x, screenPoints[0].y);

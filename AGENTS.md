@@ -252,3 +252,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Canvas resizing now rounds the backing-store dimensions **upwards** (`Math.ceil`) when applying device-pixel ratio scaling. This prevents sub-pixel gutters from accumulating stale frame data along the lower-right edge. Keep using ceiling rounding if you touch `CanvasRenderer.resize()` so the render loop always clears the full visible surface.
 - `CanvasRenderer` stores the CSS pixel width/height captured from the `ResizeObserver` and clears the backing store with the identity transform before reapplying DPR scaling each frame. Preserve this two-step clear so fractional CSS sizes map cleanly to device pixels without leaving a ghosted band along the bottom-right edge.
 
+## 2025-11-19 — Bidirectional oxidation toggle & measurement label shift
+
+- `PathMeta` now carries an `oxidationDirection` (`'inward' | 'outward'`) and defaults to `'inward'`. The Path Type panel exposes a toggle whenever the active selection is oxided—call `setOxidationDirection` so undo history and geometry recomputation stay in sync.
+- Outward oxidation flips the sampled normals before entering `deriveInnerGeometry` and inverts the dot clip mask using an even-odd pass across the whole canvas. When adding new renders, honour the `oxidationDirection` so exterior previews stay masked correctly.
+- Measurement callouts anchor near the probe’s start point with a short along-track offset. If you add new measurement overlays keep the offset away from the handle origin so the glyph doesn’t hide the anchor.
+

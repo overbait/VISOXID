@@ -62,6 +62,7 @@ export const App = () => {
             locked: false,
             color: '#2563eb',
             kind: 'oxided',
+            oxidationDirection: 'inward',
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },
