@@ -42,3 +42,4 @@ To load the workbench from disk without the Vite dev server:
 1. Install dependencies with `npm install` (one time).
 2. Run `npm run build` to create the production bundle under `dist/`.
 3. Open `dist/index.html` in a modern browser. All bundle paths are now relative, so the app runs correctly when launched via the `file://` protocol.
+   - Browsers that block `localStorage` for `file://` origins simply disable the scene/shape library instead of crashing, so offline sessions remain usable even without persistence.
