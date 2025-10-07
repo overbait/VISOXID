@@ -232,10 +232,19 @@ export const drawOxidationDots = (
 
   const transforms = createMirrorTransforms(mirror);
 
-  const drawWorldPolygon = (points: Vec2[]) => {
+  const drawWorldPolygon = (points: Vec2[], clipScreen?: Vec2[]) => {
     const screenPoints = points.map((point) => worldToCanvas(point, view));
     if (screenPoints.length < 3) return;
     ctx.save();
+    if (clipScreen && clipScreen.length >= 3) {
+      ctx.beginPath();
+      ctx.moveTo(clipScreen[0].x, clipScreen[0].y);
+      for (let i = 1; i < clipScreen.length; i += 1) {
+        ctx.lineTo(clipScreen[i].x, clipScreen[i].y);
+      }
+      ctx.closePath();
+      ctx.clip();
+    }
     ctx.beginPath();
     ctx.moveTo(screenPoints[0].x, screenPoints[0].y);
     for (let i = 1; i < screenPoints.length; i += 1) {
@@ -252,11 +261,38 @@ export const drawOxidationDots = (
     ctx.restore();
   };
 
+  const clipWorld = path.meta.closed
+    ? path.sampled?.samples?.map((sample) => sample.position) ??
+      path.nodes.map((node) => node.point)
+    : undefined;
+  let baseClipScreen: Vec2[] | undefined;
+  let mirrorClipScreens: Vec2[][] = [];
+  if (clipWorld && clipWorld.length >= 3) {
+    baseClipScreen = clipWorld.map((point) => worldToCanvas(point, view));
+    mirrorClipScreens = transforms.map((transform) =>
+      clipWorld.map((point) => worldToCanvas(transform(point), view)),
+    );
+  }
+
+  const variants: Array<{
+    apply: (points: Vec2[]) => Vec2[];
+    clipScreen?: Vec2[];
+  }> = [
+    {
+      apply: (points) => points,
+      clipScreen: baseClipScreen,
+    },
+    ...transforms.map((transform, index) => ({
+      apply: (points: Vec2[]) => points.map(transform),
+      clipScreen: mirrorClipScreens[index],
+    })),
+  ];
+
   centers.forEach((center) => {
     const basePolygon = translatePolygon(dotPolygon, center);
-    drawWorldPolygon(basePolygon);
-    transforms.forEach((transform) => {
-      drawWorldPolygon(basePolygon.map(transform));
+    variants.forEach((variant) => {
+      const polygon = variant.apply(basePolygon);
+      drawWorldPolygon(polygon, variant.clipScreen);
     });
   });
 };

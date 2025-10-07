@@ -212,3 +212,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - The Select tool now supports marquee selection by dragging from empty canvas space. Honour the `boxSelection` session in `CanvasViewport` when tweaking pointer handlers and keep Shift-drag additive to the existing node selection.
 - Node drags can move multiple anchors at once; grouped updates route through `translateNodeGroup` so handles shift together and history stays consistent. Avoid bypassing this helper when touching group-drag logic.
 - Hover measurements recognise hits on the oxidation edge as well as the outer contour. Preserve the combined inner/outer hit-testing so hover probes stay responsive even when pointing at the oxide boundary.
+
+## 2025-11-12 — Oxidation dot clipping masks
+
+- `drawOxidationDots` now clips each rendered dot against its closed contour so the exterior half stays invisible. When touching this overlay, keep the per-variant canvas `clip()` guard so mirrored paths inherit the same masking without leaking across shapes.
+- Only closed paths provide a clip polygon; open traces still render the full dot glyph. Preserve this distinction so open-line previews keep showing both sides of the stroke.
