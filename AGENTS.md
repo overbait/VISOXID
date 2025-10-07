@@ -248,6 +248,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Vite now builds with `base: './'` so production assets resolve when opening `dist/index.html` via the `file://` protocol. Preserve this base when adjusting the config or relative paths will break offline launches.
 - The README documents the offline workflow (build then open the generated HTML). Keep those steps accurate if the build output or folder structure changes.
 - Browsers that block `localStorage` on `file://` origins must fail gracefully. Use the shared storage resolver in `workspaceStore` and avoid new direct `window.localStorage` calls so offline launches keep working without persistence.
+- Production builds disable Vite's modulepreload polyfill so double-click launches avoid `fetch` errors on `file://` URLs. Don't re-enable the polyfill unless you also add a disk-safe loader.
 
 ## 2025-11-21 — Electron desktop shell
 
