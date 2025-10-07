@@ -4,6 +4,14 @@ import path from 'node:path'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: './',
+  build: {
+    modulePreload: {
+      // Fetch-based polyfills break when launching the bundle via the file protocol.
+      // Disable them so offline users can open dist/index.html without a local server.
+      polyfill: false,
+    },
+  },
   plugins: [react()],
   resolve: {
     alias: {

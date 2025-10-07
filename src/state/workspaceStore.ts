@@ -96,10 +96,33 @@ const createDirectionalWeight = (label: string, angleDeg: number, valueUm = 0): 
   valueUm: clampThickness(valueUm),
 });
 
-const loadLibrary = (): StoredShape[] => {
-  if (typeof window === 'undefined') return [];
+let cachedLocalStorage: Storage | null | undefined;
+
+const resolveLocalStorage = (): Storage | null => {
+  if (cachedLocalStorage !== undefined) {
+    return cachedLocalStorage;
+  }
+  if (typeof window === 'undefined') {
+    cachedLocalStorage = null;
+    return cachedLocalStorage;
+  }
   try {
-    const raw = window.localStorage.getItem(LIBRARY_STORAGE_KEY);
+    const storage = window.localStorage;
+    // Access a benign API to trigger browsers that block localStorage on file:// origins.
+    storage.getItem(LIBRARY_STORAGE_KEY);
+    cachedLocalStorage = storage;
+  } catch (error) {
+    console.warn('Local storage unavailable; persistence features are disabled.', error);
+    cachedLocalStorage = null;
+  }
+  return cachedLocalStorage;
+};
+
+const loadLibrary = (): StoredShape[] => {
+  const storage = resolveLocalStorage();
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(LIBRARY_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as StoredShape[];
     return parsed.map((shape) => ({
@@ -115,7 +138,8 @@ const loadLibrary = (): StoredShape[] => {
 };
 
 const persistLibrary = (library: StoredShape[]): void => {
-  if (typeof window === 'undefined') return;
+  const storage = resolveLocalStorage();
+  if (!storage) return;
   try {
     const serialisable = library.map((shape) => ({
       ...shape,
@@ -123,7 +147,7 @@ const persistLibrary = (library: StoredShape[]): void => {
       nodes: shape.nodes.map((node) => ({ ...node })),
       oxidation: cloneOxidationSettings(shape.oxidation),
     }));
-    window.localStorage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(serialisable));
+    storage.setItem(LIBRARY_STORAGE_KEY, JSON.stringify(serialisable));
   } catch (error) {
     console.warn('Failed to persist shape library', error);
   }
@@ -525,9 +549,10 @@ const cloneStoredScene = (scene: StoredScene): StoredScene => ({
 });
 
 const loadScenes = (): StoredScene[] => {
-  if (typeof window === 'undefined') return [];
+  const storage = resolveLocalStorage();
+  if (!storage) return [];
   try {
-    const raw = window.localStorage.getItem(SCENE_STORAGE_KEY);
+    const raw = storage.getItem(SCENE_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as StoredScene[];
     return parsed.map((scene) => cloneStoredScene(scene));
@@ -538,13 +563,14 @@ const loadScenes = (): StoredScene[] => {
 };
 
 const persistScenes = (scenes: StoredScene[]): void => {
-  if (typeof window === 'undefined') return;
+  const storage = resolveLocalStorage();
+  if (!storage) return;
   try {
     const serialisable = scenes.map((scene) => ({
       ...scene,
       state: cloneStoredSceneState(scene.state),
     }));
-    window.localStorage.setItem(SCENE_STORAGE_KEY, JSON.stringify(serialisable));
+    storage.setItem(SCENE_STORAGE_KEY, JSON.stringify(serialisable));
   } catch (error) {
     console.warn('Failed to persist scene library', error);
   }

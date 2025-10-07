@@ -243,3 +243,16 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Saved export measurements render distance-only callouts on the canvas. When extending measurement drawing, keep export mode hiding labels/angles for saved entries so captures stay clean.
 - Scene library entries can be exported/imported as JSON bundles. Use `handleSceneExport`/`importSceneToLibrary` for new entry points so the `{ version: 1, scene }` payload remains consistent and sanitisation stays centralised.
 
+## 2025-11-20 — Offline bundle support
+
+- Vite now builds with `base: './'` so production assets resolve when opening `dist/index.html` via the `file://` protocol. Preserve this base when adjusting the config or relative paths will break offline launches.
+- The README documents the offline workflow (build then open the generated HTML). Keep those steps accurate if the build output or folder structure changes.
+- Browsers that block `localStorage` on `file://` origins must fail gracefully. Use the shared storage resolver in `workspaceStore` and avoid new direct `window.localStorage` calls so offline launches keep working without persistence.
+- Production builds disable Vite's modulepreload polyfill so double-click launches avoid `fetch` errors on `file://` URLs. Don't re-enable the polyfill unless you also add a disk-safe loader.
+
+## 2025-11-21 — Electron desktop shell
+
+- Oxid Designer now ships with an Electron wrapper (`electron/main.js`) that loads the offline bundle. Keep the entry point free of bundler-specific imports so it runs after a plain `npm run build`.
+- `package.json` declares `electron:start`/`electron:package` scripts plus an `electron-builder` config. Update all three when moving files so desktop builds keep working.
+- Electron packages rely on the same `dist/index.html`; do not introduce absolute URLs or the shell will boot to a blank window.
+
