@@ -250,4 +250,5 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-11-18 — Canvas backing-store rounding fix
 
 - Canvas resizing now rounds the backing-store dimensions **upwards** (`Math.ceil`) when applying device-pixel ratio scaling. This prevents sub-pixel gutters from accumulating stale frame data along the lower-right edge. Keep using ceiling rounding if you touch `CanvasRenderer.resize()` so the render loop always clears the full visible surface.
+- `CanvasRenderer` stores the CSS pixel width/height captured from the `ResizeObserver` and clears the backing store with the identity transform before reapplying DPR scaling each frame. Preserve this two-step clear so fractional CSS sizes map cleanly to device pixels without leaving a ghosted band along the bottom-right edge.
 

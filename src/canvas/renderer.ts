@@ -23,6 +23,10 @@ export class CanvasRenderer {
 
   private getState: StateGetter;
 
+  private cssWidth = 0;
+
+  private cssHeight = 0;
+
   constructor(canvas: HTMLCanvasElement, getState: StateGetter) {
     this.canvas = canvas;
     this.getState = getState;
@@ -55,6 +59,8 @@ export class CanvasRenderer {
 
   private resize(): void {
     const { width, height } = this.canvas.getBoundingClientRect();
+    this.cssWidth = width;
+    this.cssHeight = height;
     const pixelWidth = Math.max(1, Math.ceil(width * this.dpr));
     const pixelHeight = Math.max(1, Math.ceil(height * this.dpr));
     if (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight) {
@@ -67,11 +73,16 @@ export class CanvasRenderer {
   private render(): void {
     const state = this.getState();
     const { width, height } = this.canvas;
+
+    this.ctx.save();
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, width, height);
+    this.ctx.restore();
+
     this.ctx.save();
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.ctx.clearRect(0, 0, width, height);
-    const logicalWidth = width / this.dpr;
-    const logicalHeight = height / this.dpr;
+    const logicalWidth = this.cssWidth || width / this.dpr;
+    const logicalHeight = this.cssHeight || height / this.dpr;
     const view = computeViewTransform(logicalWidth, logicalHeight, state.zoom, state.pan);
     drawGrid(this.ctx, state.grid, view);
     drawMirrorAxes(this.ctx, state.mirror, view);
