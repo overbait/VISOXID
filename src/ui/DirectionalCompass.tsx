@@ -18,8 +18,8 @@ const ADD_RING_INNER = OUTER_RADIUS - 20;
 const ADD_RING_OUTER = OUTER_RADIUS + 14;
 
 const clampValue = (value: number): number => {
-  if (Number.isNaN(value)) return 0;
-  return Math.min(10, Math.max(0, value));
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, value);
 };
 
 const wrapAngle = (angleDeg: number): number => {
@@ -78,7 +78,7 @@ const valueToColor = (value: number): string => {
 };
 
 const spokeRadiusForValue = (value: number): number => {
-  const ratio = Math.min(Math.max(value / 10, 0), 1);
+  const ratio = Math.max(value / 10, 0);
   const maxRadius = OUTER_RADIUS - 24;
   return MIN_SPOKE_RADIUS + ratio * Math.max(maxRadius - MIN_SPOKE_RADIUS, 0);
 };
@@ -555,7 +555,6 @@ export const DirectionalCompass = () => {
                 <input
                   type="number"
                   min={0}
-                  max={10}
                   step={0.1}
                   value={selectedWeight.valueUm.toFixed(1)}
                   onChange={(event) => handleValueChange(selectedWeight.id, Number(event.target.value))}

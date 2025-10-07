@@ -33,7 +33,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Segment toggling (line ↔︎ Bézier) is handled in the store via `toggleSegmentCurve`.  Any future editing affordances should reuse that action to keep mirrored/closed path invariants intact.
 - Path endpoints auto-close when they approach within ~4 μm and mirror snapping pins points to the configured axes—avoid bypassing `mergeEndpointsIfClose` or `applyMirrorSnapping` when mutating node arrays.
 - Inner oxidation silhouettes are now cleaned with Clipper before resampling; if you extend the offset logic, feed new contours back through `cleanAndSimplifyPolygons` so ribbons never self-intersect.
-- UI and models now clamp oxide inputs to ≤ 10 μm.  Preserve `MAX_THICKNESS_UM` when introducing new entry points or validation.
+- UI and models now clamp oxide inputs to ≤ 10 μm.  Preserve `MAX_THICKNESS_UM` when introducing new entry points or validation. *(Superseded by the 2025-11-20 update removing this ceiling.)*
 
 ## 2024-05-29 — 50 μm viewport, mirrored previews & smarter pen
 
@@ -257,4 +257,10 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `PathMeta` now carries an `oxidationDirection` (`'inward' | 'outward'`) and defaults to `'inward'`. The Path Type panel exposes a toggle whenever the active selection is oxided—call `setOxidationDirection` so undo history and geometry recomputation stay in sync.
 - Outward oxidation flips the sampled normals before entering `deriveInnerGeometry` and inverts the dot clip mask using an even-odd pass across the whole canvas. When adding new renders, honour the `oxidationDirection` so exterior previews stay masked correctly.
 - Measurement callouts anchor near the probe’s start point with a short along-track offset. If you add new measurement overlays keep the offset away from the handle origin so the glyph doesn’t hide the anchor.
+
+## 2025-11-20 — Compass scaling & oxidation defaults
+
+- The Path Type panel’s inside/outside switch now sits directly under the Oxided button with the compact “inside - outside” label. Keep this placement when adjusting the layout so the toggle stays adjacent to the path mode control.
+- Directional thickness inputs no longer clamp at 10 μm; treat every non-negative value as valid and avoid reintroducing hard maximums in the store or compass editor. The preview spokes should continue to grow proportionally beyond the original compass boundary.
+- Oxidation preview dots now default to 130 and the Oxidation panel no longer exposes the mirror symmetry checkbox. Leave the new default in place when seeding state or resetting the workspace.
 

@@ -40,16 +40,20 @@ import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 const SCENE_STORAGE_KEY = 'visoxid:scene-library';
 
-const MAX_THICKNESS_UM = 10;
 const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 const MAX_DOT_COUNT = 1000;
-const DEFAULT_DOT_COUNT = 240;
+const DEFAULT_DOT_COUNT = 130;
 const DEFAULT_MEASUREMENT_COLOR = '#1e3a8a';
 
-const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
+const clampThickness = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, value);
+};
 const clampZoom = (value: number): number => clamp(value, MIN_ZOOM, MAX_ZOOM);
 
 const clampDotCount = (value: number | undefined): number => {

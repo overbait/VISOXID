@@ -76,17 +76,6 @@ export const OxidationPanel = () => {
           format={(value) => Math.round(value).toString()}
         />
       </div>
-      <label className="flex items-center gap-2 text-xs font-medium text-muted">
-        <input
-          type="checkbox"
-          className="h-4 w-4 rounded border-border text-accent focus:ring-accent"
-          checked={active.mirrorSymmetry}
-          onChange={(event) => {
-            updateDefaults({ mirrorSymmetry: event.target.checked });
-          }}
-        />
-        Mirror symmetry
-      </label>
     </div>
   );
 };
