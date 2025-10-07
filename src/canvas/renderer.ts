@@ -79,6 +79,7 @@ export class CanvasRenderer {
     const showDots = state.oxidationVisible;
     const dotCount = state.oxidationDotCount;
     const progress = state.oxidationProgress;
+    const exportMode = state.exportView.active;
 
     state.paths.forEach((path) => {
       const selected = state.selectedPathIds.includes(path.meta.id);
@@ -98,10 +99,18 @@ export class CanvasRenderer {
           showDots,
         );
       }
-      drawHandles(this.ctx, path, selected, view, state.nodeSelection);
+      if (!exportMode) {
+        drawHandles(this.ctx, path, selected, view, state.nodeSelection);
+      }
     });
     drawSnaps(this.ctx, state.paths, state.measurements, view);
-    drawMeasurements(this.ctx, state.measurements, view);
+    drawMeasurements(
+      this.ctx,
+      state.measurements,
+      view,
+      state.exportView.measurements,
+      exportMode,
+    );
     this.ctx.restore();
   }
 }

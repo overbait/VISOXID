@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type {
   DirectionWeight,
+  ExportMeasurement,
+  ExportViewState,
   MeasurementProbe,
   MeasurementState,
   NodeSelection,
@@ -44,6 +46,7 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 const MAX_DOT_COUNT = 1000;
 const DEFAULT_DOT_COUNT = 240;
+const DEFAULT_MEASUREMENT_COLOR = '#1e3a8a';
 
 const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
 const clampZoom = (value: number): number => clamp(value, MIN_ZOOM, MAX_ZOOM);
@@ -145,6 +148,356 @@ const cloneMeasurementState = (measurements: MeasurementState): MeasurementState
   showHeatmap: measurements.showHeatmap,
 });
 
+const cloneExportMeasurement = (entry: ExportMeasurement): ExportMeasurement => ({
+  ...entry,
+  probe: {
+    ...entry.probe,
+    a: { ...entry.probe.a },
+    b: { ...entry.probe.b },
+  },
+});
+
+const cloneExportView = (view: ExportViewState): ExportViewState => ({
+  active: view.active,
+  previousTool: view.previousTool,
+  measurements: view.measurements.map((entry) => cloneExportMeasurement(entry)),
+  sequence: view.sequence,
+});
+
+const sanitizeExportView = (value: Partial<ExportViewState> | undefined): ExportViewState => {
+  if (!value) {
+    return {
+      active: false,
+      previousTool: null,
+      measurements: [],
+      sequence: 1,
+    };
+  }
+  const measurements = Array.isArray(value.measurements)
+    ? value.measurements
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') {
+            return null;
+          }
+          const probe = cloneMeasurementProbe((entry as ExportMeasurement).probe ?? null);
+          if (!probe) {
+            return null;
+          }
+          return {
+            id: (entry as ExportMeasurement).id ?? createId('export-measure'),
+            label: (entry as ExportMeasurement).label ?? 'M?',
+            color: typeof (entry as ExportMeasurement).color === 'string'
+              ? (entry as ExportMeasurement).color
+              : DEFAULT_MEASUREMENT_COLOR,
+            probe: {
+              ...probe,
+              id: (entry as ExportMeasurement).probe?.id ?? createId('probe'),
+            },
+          } satisfies ExportMeasurement;
+        })
+        .filter((entry): entry is ExportMeasurement => Boolean(entry))
+    : [];
+  const sequenceCandidate = Number((value.sequence ?? measurements.length + 1) as number);
+  const sequence = Number.isFinite(sequenceCandidate) ? Math.max(1, Math.round(sequenceCandidate)) : measurements.length + 1;
+  return {
+    active: Boolean(value.active),
+    previousTool: (value.previousTool ?? null) as ToolId | null,
+    measurements,
+    sequence,
+  };
+};
+
+const sanitizeVec2 = (value: unknown, fallback: Vec2): Vec2 => {
+  if (!value || typeof value !== 'object') {
+    return { ...fallback };
+  }
+  const candidate = value as Partial<Vec2>;
+  const x = Number(candidate.x);
+  const y = Number(candidate.y);
+  return {
+    x: Number.isFinite(x) ? x : fallback.x,
+    y: Number.isFinite(y) ? y : fallback.y,
+  };
+};
+
+const sanitizeHandle = (value: unknown): Vec2 | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const candidate = value as Partial<Vec2>;
+  const x = Number(candidate.x);
+  const y = Number(candidate.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return { x, y };
+};
+
+const sanitizePathNode = (value: unknown): PathNode | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const candidate = value as Partial<PathNode>;
+  if (!candidate.point) {
+    return null;
+  }
+  const point = sanitizeVec2(candidate.point, { x: 0, y: 0 });
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    return null;
+  }
+  const handleIn = sanitizeHandle(candidate.handleIn ?? null);
+  const handleOut = sanitizeHandle(candidate.handleOut ?? null);
+  const node: PathNode = {
+    id: typeof candidate.id === 'string' ? candidate.id : createId('node'),
+    point,
+    handleIn,
+    handleOut,
+  };
+  if (candidate.pressure !== undefined && Number.isFinite(candidate.pressure)) {
+    node.pressure = candidate.pressure as number;
+  }
+  if (candidate.timestamp !== undefined && Number.isFinite(candidate.timestamp)) {
+    node.timestamp = candidate.timestamp as number;
+  }
+  return node;
+};
+
+const sanitizeMeasurementProbe = (value: unknown): MeasurementProbe | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const candidate = value as Partial<MeasurementProbe>;
+  if (!candidate.a || !candidate.b) {
+    return null;
+  }
+  const a = sanitizeVec2(candidate.a, { x: 0, y: 0 });
+  const b = sanitizeVec2(candidate.b, { x: 0, y: 0 });
+  if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || !Number.isFinite(b.x) || !Number.isFinite(b.y)) {
+    return null;
+  }
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const distanceValue = Number.isFinite(candidate.distance) ? (candidate.distance as number) : Math.hypot(dx, dy);
+  const angleDegValue = Number.isFinite(candidate.angleDeg)
+    ? (candidate.angleDeg as number)
+    : (Math.atan2(dy, dx) * 180) / Math.PI;
+  const probe: MeasurementProbe = {
+    id: typeof candidate.id === 'string' ? candidate.id : createId('probe'),
+    a,
+    b,
+    distance: distanceValue,
+    angleDeg: angleDegValue,
+  };
+  if (candidate.thicknessA !== undefined && Number.isFinite(candidate.thicknessA)) {
+    probe.thicknessA = candidate.thicknessA as number;
+  }
+  if (candidate.thicknessB !== undefined && Number.isFinite(candidate.thicknessB)) {
+    probe.thicknessB = candidate.thicknessB as number;
+  }
+  return probe;
+};
+
+const sanitizeMeasurementState = (value: unknown, fallback: MeasurementState): MeasurementState => {
+  if (!value || typeof value !== 'object') {
+    return cloneMeasurementState(fallback);
+  }
+  const candidate = value as Partial<MeasurementState>;
+  return {
+    hoverProbe: sanitizeMeasurementProbe(candidate.hoverProbe ?? null),
+    pinnedProbe: sanitizeMeasurementProbe(candidate.pinnedProbe ?? null),
+    dragProbe: sanitizeMeasurementProbe(candidate.dragProbe ?? null),
+    snapping: typeof candidate.snapping === 'boolean' ? candidate.snapping : fallback.snapping,
+    showHeatmap: typeof candidate.showHeatmap === 'boolean' ? candidate.showHeatmap : fallback.showHeatmap,
+  };
+};
+
+const isToolId = (value: unknown): value is ToolId =>
+  typeof value === 'string' && ['select', 'line', 'dot', 'measure', 'pan', 'rotate', 'erase'].includes(value);
+
+const sanitizePathEntityForScene = (value: unknown): PathEntity | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const candidate = value as Partial<PathEntity>;
+  if (!Array.isArray(candidate.nodes) || !candidate.meta) {
+    return null;
+  }
+  const nodes = candidate.nodes
+    .map((node) => sanitizePathNode(node))
+    .filter((node): node is PathNode => Boolean(node));
+  if (nodes.length < 2) {
+    return null;
+  }
+  const metaCandidate = candidate.meta as Partial<PathMeta>;
+  const kind = metaCandidate.kind === 'reference' ? 'reference' : 'oxided';
+  const meta: PathMeta = {
+    id: typeof metaCandidate.id === 'string' ? metaCandidate.id : createId('path'),
+    name:
+      typeof metaCandidate.name === 'string' && metaCandidate.name.trim()
+        ? metaCandidate.name.trim()
+        : 'Imported path',
+    closed: Boolean(metaCandidate.closed),
+    visible: metaCandidate.visible !== undefined ? Boolean(metaCandidate.visible) : true,
+    locked: metaCandidate.locked !== undefined ? Boolean(metaCandidate.locked) : false,
+    color: typeof metaCandidate.color === 'string' ? metaCandidate.color : '#2563eb',
+    kind,
+    createdAt: Number.isFinite(metaCandidate.createdAt) ? (metaCandidate.createdAt as number) : Date.now(),
+    updatedAt: Number.isFinite(metaCandidate.updatedAt) ? (metaCandidate.updatedAt as number) : Date.now(),
+  };
+  const oxidation = candidate.oxidation
+    ? mergeOxidationSettings(createDefaultOxidation(), candidate.oxidation)
+    : createDefaultOxidation();
+  return {
+    nodes,
+    oxidation,
+    meta,
+  };
+};
+
+const sanitizeSceneStateFromImport = (value: unknown): StoredSceneState | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const base = captureSceneState(createEmptyState());
+  const candidate = value as Partial<StoredSceneState>;
+  if (!Array.isArray(candidate.paths)) {
+    return null;
+  }
+  const paths = candidate.paths
+    .map((path) => sanitizePathEntityForScene(path))
+    .filter((path): path is PathEntity => Boolean(path));
+  if (!paths.length) {
+    return null;
+  }
+  const pathIds = new Set(paths.map((path) => path.meta.id));
+  const selectedPathIds = Array.isArray(candidate.selectedPathIds)
+    ? candidate.selectedPathIds.filter((id): id is string => typeof id === 'string' && pathIds.has(id))
+    : [];
+  let nodeSelection: NodeSelection | null = null;
+  if (candidate.nodeSelection && typeof candidate.nodeSelection === 'object') {
+    const selection = candidate.nodeSelection as NodeSelection;
+    if (typeof selection.pathId === 'string' && Array.isArray(selection.nodeIds) && pathIds.has(selection.pathId)) {
+      const target = paths.find((path) => path.meta.id === selection.pathId);
+      if (target) {
+        const available = new Set(target.nodes.map((node) => node.id));
+        const filtered = selection.nodeIds.filter(
+          (id): id is string => typeof id === 'string' && available.has(id),
+        );
+        if (filtered.length) {
+          nodeSelection = { pathId: selection.pathId, nodeIds: filtered };
+        }
+      }
+    }
+  }
+  const pan = sanitizeVec2(candidate.pan, base.pan);
+  const grid = {
+    visible: candidate.grid && typeof candidate.grid === 'object' && 'visible' in candidate.grid
+      ? Boolean((candidate.grid as { visible?: unknown }).visible)
+      : base.grid.visible,
+    snapToGrid: candidate.grid && typeof candidate.grid === 'object' && 'snapToGrid' in candidate.grid
+      ? Boolean((candidate.grid as { snapToGrid?: unknown }).snapToGrid)
+      : base.grid.snapToGrid,
+    spacing: candidate.grid && typeof candidate.grid === 'object' && Number.isFinite((candidate.grid as { spacing?: unknown }).spacing)
+      ? Number((candidate.grid as { spacing?: unknown }).spacing)
+      : base.grid.spacing,
+    subdivisions:
+      candidate.grid && typeof candidate.grid === 'object' && Number.isFinite((candidate.grid as { subdivisions?: unknown }).subdivisions)
+        ? Math.max(1, Math.round(Number((candidate.grid as { subdivisions?: unknown }).subdivisions)))
+        : base.grid.subdivisions,
+  };
+  const mirrorBase =
+    candidate.mirror && typeof candidate.mirror === 'object'
+      ? (candidate.mirror as Partial<WorkspaceState['mirror']>)
+      : null;
+  const mirrorOrigin = mirrorBase && mirrorBase.origin
+    ? sanitizeVec2(mirrorBase.origin, base.mirror.origin)
+    : { ...base.mirror.origin };
+  const mirrorAxis =
+    mirrorBase && typeof mirrorBase.axis === 'string' && ['x', 'y', 'xy'].includes(mirrorBase.axis)
+      ? (mirrorBase.axis as WorkspaceState['mirror']['axis'])
+      : base.mirror.axis;
+  const mirror = {
+    enabled: typeof mirrorBase?.enabled === 'boolean' ? mirrorBase.enabled : base.mirror.enabled,
+    axis: mirrorAxis,
+    origin: mirrorOrigin,
+    livePreview: typeof mirrorBase?.livePreview === 'boolean' ? mirrorBase.livePreview : base.mirror.livePreview,
+  };
+  const oxidationDefaults = candidate.oxidationDefaults
+    ? mergeOxidationSettings(createDefaultOxidation(), candidate.oxidationDefaults)
+    : createDefaultOxidation();
+  const measurements = sanitizeMeasurementState(candidate.measurements, base.measurements);
+  const oxidationVisible = candidate.oxidationVisible !== undefined
+    ? Boolean(candidate.oxidationVisible)
+    : base.oxidationVisible;
+  const oxidationProgress = clamp(candidate.oxidationProgress ?? base.oxidationProgress, 0, 1);
+  const oxidationDotCount = clampDotCount(candidate.oxidationDotCount ?? base.oxidationDotCount);
+  const directionalLinking = candidate.directionalLinking !== undefined
+    ? Boolean(candidate.directionalLinking)
+    : base.directionalLinking;
+  const panelCollapse = normalizePanelCollapse(candidate.panelCollapse);
+  const exportView = sanitizeExportView(candidate.exportView ?? base.exportView);
+  const zoom = clampZoom(candidate.zoom ?? base.zoom);
+  const activeTool = isToolId(candidate.activeTool) ? candidate.activeTool : base.activeTool;
+
+  return {
+    paths,
+    selectedPathIds,
+    nodeSelection,
+    activeTool,
+    pan,
+    zoom,
+    grid,
+    mirror,
+    oxidationDefaults,
+    measurements,
+    oxidationVisible,
+    oxidationProgress,
+    oxidationDotCount,
+    directionalLinking,
+    panelCollapse,
+    exportView,
+  } satisfies StoredSceneState;
+};
+
+const sanitizeSceneImport = (value: unknown): StoredScene | null => {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const container = value as { scene?: unknown; state?: unknown; name?: unknown };
+  const sceneCandidate =
+    container.scene && typeof container.scene === 'object'
+      ? (container.scene as Record<string, unknown>)
+      : (value as Record<string, unknown>);
+  const stateCandidate =
+    sceneCandidate.state && typeof sceneCandidate.state === 'object'
+      ? sceneCandidate.state
+      : container.state && typeof container.state === 'object'
+        ? container.state
+        : null;
+  if (!stateCandidate) {
+    return null;
+  }
+  const state = sanitizeSceneStateFromImport(stateCandidate);
+  if (!state) {
+    return null;
+  }
+  const nameCandidate =
+    typeof sceneCandidate.name === 'string' && sceneCandidate.name.trim()
+      ? sceneCandidate.name.trim()
+      : typeof container.name === 'string' && container.name.trim()
+        ? container.name.trim()
+        : 'Imported scene';
+  const createdAtCandidate = Number(sceneCandidate.createdAt);
+  const updatedAtCandidate = Number(sceneCandidate.updatedAt);
+  return {
+    id: createId('scene'),
+    name: nameCandidate,
+    state,
+    createdAt: Number.isFinite(createdAtCandidate) ? createdAtCandidate : Date.now(),
+    updatedAt: Number.isFinite(updatedAtCandidate) ? updatedAtCandidate : Date.now(),
+  };
+};
+
 const cloneStoredSceneState = (state: StoredSceneState): StoredSceneState => ({
   paths: state.paths.map(clonePath),
   selectedPathIds: [...state.selectedPathIds],
@@ -163,6 +516,7 @@ const cloneStoredSceneState = (state: StoredSceneState): StoredSceneState => ({
   oxidationDotCount: state.oxidationDotCount,
   directionalLinking: state.directionalLinking,
   panelCollapse: normalizePanelCollapse(state.panelCollapse),
+  exportView: cloneExportView(state.exportView),
 });
 
 const cloneStoredScene = (scene: StoredScene): StoredScene => ({
@@ -856,6 +1210,12 @@ const createEmptyState = (library: StoredShape[] = [], scenes: StoredScene[] = [
     snapping: true,
     showHeatmap: true,
   },
+  exportView: {
+    active: false,
+    previousTool: null,
+    measurements: [],
+    sequence: 1,
+  },
   warnings: [],
   history: [],
   future: [],
@@ -921,6 +1281,7 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   zoom: state.zoom,
   pan: { ...state.pan },
   panelCollapse: normalizePanelCollapse(state.panelCollapse),
+  exportView: cloneExportView(state.exportView),
 });
 
 const captureSceneState = (state: WorkspaceState): StoredSceneState => ({
@@ -941,6 +1302,7 @@ const captureSceneState = (state: WorkspaceState): StoredSceneState => ({
   oxidationDotCount: state.oxidationDotCount,
   directionalLinking: state.directionalLinking,
   panelCollapse: normalizePanelCollapse(state.panelCollapse),
+  exportView: cloneExportView(state.exportView),
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
@@ -988,12 +1350,18 @@ type WorkspaceActions = {
   removeSceneFromLibrary: (sceneId: string) => void;
   renameSceneInLibrary: (sceneId: string, name: string) => void;
   loadSceneFromLibrary: (sceneId: string) => void;
+  importSceneToLibrary: (payload: unknown) => { ok: boolean; name?: string; error?: string };
   resetScene: () => void;
   undo: () => void;
   redo: () => void;
   importState: (state: WorkspaceState) => void;
   reset: () => void;
   toggleSegmentCurve: (pathId: string, segmentIndex: number) => void;
+  openExportView: () => void;
+  closeExportView: () => void;
+  addExportMeasurement: (probe: MeasurementProbe) => void;
+  updateExportMeasurementColor: (id: string, color: string) => void;
+  removeExportMeasurement: (id: string) => void;
 };
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -1683,6 +2051,18 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       persistScenes(scenes);
       return { ...state, scenes };
     }),
+  importSceneToLibrary: (payload) => {
+    const sanitized = sanitizeSceneImport(payload);
+    if (!sanitized) {
+      return { ok: false, error: 'Invalid scene payload' } as const;
+    }
+    set((state) => {
+      const scenes = [sanitized, ...state.scenes];
+      persistScenes(scenes);
+      return { ...state, scenes };
+    });
+    return { ok: true, name: sanitized.name } as const;
+  },
   removeSceneFromLibrary: (sceneId) =>
     set((state) => {
       const scenes = state.scenes.filter((scene) => scene.id !== sceneId);
@@ -1753,6 +2133,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         oxidationDotCount: clampDotCount(clonedScene.state.oxidationDotCount),
         directionalLinking: clonedScene.state.directionalLinking,
         panelCollapse: normalizePanelCollapse(clonedScene.state.panelCollapse),
+        exportView: sanitizeExportView(clonedScene.state.exportView),
         library: state.library.map(cloneStoredShape),
         scenes: state.scenes.map(cloneStoredScene),
         history: [],
@@ -1773,6 +2154,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         hoverProbe: null,
         pinnedProbe: null,
         dragProbe: null,
+      },
+      exportView: {
+        active: false,
+        previousTool: null,
+        measurements: [],
+        sequence: 1,
       },
       history: [],
       future: [],
@@ -1805,6 +2192,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         zoom: previous.zoom,
         pan: { ...previous.pan },
         panelCollapse: normalizePanelCollapse(previous.panelCollapse),
+        exportView: cloneExportView(previous.exportView),
       };
     });
   },
@@ -1831,6 +2219,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         zoom: snapshot.zoom,
         pan: { ...snapshot.pan },
         panelCollapse: normalizePanelCollapse(snapshot.panelCollapse),
+        exportView: cloneExportView(snapshot.exportView),
       };
     });
   },
@@ -1866,6 +2255,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         state.library.map(cloneStoredShape),
         state.scenes.map(cloneStoredScene),
       );
+      const exportView = sanitizeExportView(payload.exportView);
       return {
         ...base,
         ...payload,
@@ -1885,6 +2275,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         zoom: clampZoom(payload.zoom ?? 1),
         pan: payload.pan ?? { x: 0, y: 0 },
         panelCollapse: normalizePanelCollapse(payload.panelCollapse),
+        exportView,
       };
     }),
   reset: () =>
@@ -1963,4 +2354,81 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
     });
   },
+  openExportView: () =>
+    set((state) => {
+      if (state.exportView.active) {
+        return state;
+      }
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          active: true,
+          previousTool: state.activeTool,
+        },
+        activeTool: 'measure',
+      };
+    }),
+  closeExportView: () =>
+    set((state) => {
+      if (!state.exportView.active) {
+        return state;
+      }
+      const previousTool = state.exportView.previousTool ?? 'line';
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          active: false,
+          previousTool: null,
+        },
+        activeTool: previousTool,
+      };
+    }),
+  addExportMeasurement: (probe) =>
+    set((state) => {
+      const cloned = cloneMeasurementProbe(probe);
+      if (!cloned) {
+        return state;
+      }
+      const measurementProbe: MeasurementProbe = {
+        ...cloned,
+        id: createId('probe'),
+      };
+      const entry: ExportMeasurement = {
+        id: createId('export-measure'),
+        label: `M${state.exportView.sequence}`,
+        color: DEFAULT_MEASUREMENT_COLOR,
+        probe: measurementProbe,
+      };
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          measurements: [...state.exportView.measurements, entry],
+          sequence: state.exportView.sequence + 1,
+        },
+        dirty: true,
+      };
+    }),
+  updateExportMeasurementColor: (id, color) =>
+    set((state) => {
+      const next = state.exportView.measurements.map((entry) =>
+        entry.id === id ? { ...entry, color } : entry,
+      );
+      return {
+        ...state,
+        exportView: { ...state.exportView, measurements: next },
+        dirty: true,
+      };
+    }),
+  removeExportMeasurement: (id) =>
+    set((state) => ({
+      ...state,
+      exportView: {
+        ...state.exportView,
+        measurements: state.exportView.measurements.filter((entry) => entry.id !== id),
+      },
+      dirty: true,
+    })),
 }));

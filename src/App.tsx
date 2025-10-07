@@ -9,6 +9,7 @@ import { StatusBar } from './ui/StatusBar';
 import { ImportExportPanel } from './ui/ImportExportPanel';
 import { ScenePanel } from './ui/ScenePanel';
 import { PathTypePanel } from './ui/PathTypePanel';
+import { ExportView } from './ui/ExportView';
 import { useKeyboardShortcuts } from './ui/useKeyboardShortcuts';
 import { useWorkspaceStore } from './state';
 import { createId } from './utils/ids';
@@ -39,6 +40,7 @@ export const App = () => {
   const panelCollapse = useWorkspaceStore((state) => state.panelCollapse);
   const setPanelCollapsed = useWorkspaceStore((state) => state.setPanelCollapsed);
   const rightCollapsed = panelCollapse.rightSidebar;
+  const exportViewActive = useWorkspaceStore((state) => state.exportView.active);
 
   const rightColumnWidth = rightCollapsed ? 'max-content' : '320px';
 
@@ -69,6 +71,10 @@ export const App = () => {
       markBootstrapped();
     }
   }, [addPath, bootstrapped, markBootstrapped, pathCount, pushWarning]);
+
+  if (exportViewActive) {
+    return <ExportView />;
+  }
 
   return (
     <div className="min-h-screen bg-background px-4 py-6 text-text sm:px-6 lg:px-8">

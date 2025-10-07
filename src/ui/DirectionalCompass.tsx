@@ -93,7 +93,7 @@ export const DirectionalCompass = () => {
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
   const linking = useWorkspaceStore((state) => state.directionalLinking);
   const setLinking = useWorkspaceStore((state) => state.setDirectionalLinking);
-  const pushWarning = useWorkspaceStore((state) => state.pushWarning);
+  const openExportView = useWorkspaceStore((state) => state.openExportView);
   const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
 
   const activeWeights = defaults.thicknessByDirection.items;
@@ -580,9 +580,9 @@ export const DirectionalCompass = () => {
             <button
               type="button"
               className="rounded-full border border-border bg-white/80 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent shadow-sm transition hover:bg-white"
-              onClick={() => pushWarning('PNG export is coming soon.', 'info')}
+              onClick={openExportView}
             >
-              Export PNG
+              Export view
             </button>
           </div>
         )}

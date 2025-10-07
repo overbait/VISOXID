@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState, type ChangeEvent } from 'react';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
 import { createCircleNodes } from '../utils/presets';
@@ -15,6 +15,7 @@ export const ScenePanel = () => {
   const renameScene = useWorkspaceStore((state) => state.renameSceneInLibrary);
   const loadShape = useWorkspaceStore((state) => state.loadShapeFromLibrary);
   const loadStoredScene = useWorkspaceStore((state) => state.loadSceneFromLibrary);
+  const importScene = useWorkspaceStore((state) => state.importSceneToLibrary);
   const resetScene = useWorkspaceStore((state) => state.resetScene);
   const removePath = useWorkspaceStore((state) => state.removePath);
   const addPath = useWorkspaceStore((state) => state.addPath);
@@ -29,6 +30,7 @@ export const ScenePanel = () => {
   const [referenceOvalScale, setReferenceOvalScale] = useState(1);
   const [shapeRenameDrafts, setShapeRenameDrafts] = useState<Record<string, string>>({});
   const [sceneRenameDrafts, setSceneRenameDrafts] = useState<Record<string, string>>({});
+  const sceneImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedPath = paths.find((path) => path.meta.id === selectedPathIds[0]);
   const activeNodeId =
@@ -60,6 +62,42 @@ export const ScenePanel = () => {
   const handleSceneSave = () => {
     const fallback = selectedPath?.meta.name ?? 'Untitled scene';
     saveScene(saveName || fallback);
+  };
+
+  const handleSceneExport = (sceneId: string) => {
+    const scene = scenes.find((entry) => entry.id === sceneId);
+    if (!scene) return;
+    const safeName = scene.name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-');
+    const filename = `${safeName || 'scene'}.visoxid-scene.json`;
+    const payload = JSON.stringify({ version: 1, scene }, null, 2);
+    const blob = new Blob([payload], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const handleSceneImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const [file] = event.target.files ?? [];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const result = importScene(data);
+      if (result.ok) {
+        pushWarning(`Imported scene "${result.name}"`, 'info');
+      } else {
+        pushWarning(result.error ?? 'File is not a valid scene', 'error');
+      }
+    } catch (error) {
+      console.error(error);
+      pushWarning('Failed to import scene file', 'error');
+    }
+    event.target.value = '';
   };
 
   const handleShapeRenameCommit = (id: string) => {
@@ -250,7 +288,16 @@ export const ScenePanel = () => {
       )}
       <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3">
         <div className="flex flex-col gap-2">
-          <div className="text-[11px] uppercase tracking-wide text-muted">Saved scenes</div>
+          <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-muted">
+            <span>Saved scenes</span>
+            <button
+              type="button"
+              className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
+              onClick={() => sceneImportInputRef.current?.click()}
+            >
+              Import scene
+            </button>
+          </div>
           {scenes.length === 0 ? (
             <div className="text-xs">Capture a scene to preserve the full workspace configuration.</div>
           ) : (
@@ -285,6 +332,13 @@ export const ScenePanel = () => {
                       <button
                         type="button"
                         className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
+                        onClick={() => handleSceneExport(scene.id)}
+                      >
+                        Export
+                      </button>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
                         onClick={() => removeScene(scene.id)}
                       >
                         Delete
@@ -299,6 +353,13 @@ export const ScenePanel = () => {
               })}
             </ul>
           )}
+          <input
+            ref={sceneImportInputRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={handleSceneImport}
+          />
         </div>
         <div className="my-3 h-px bg-border/60" />
         <div className="flex flex-col gap-2">
