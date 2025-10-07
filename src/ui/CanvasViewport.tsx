@@ -47,7 +47,11 @@ const orderPathsBySelection = (paths: PathEntity[], selectedIds: string[]): Path
   ];
 };
 
-export const CanvasViewport = () => {
+interface CanvasViewportProps {
+  variant?: 'default' | 'export';
+}
+
+export const CanvasViewport = ({ variant = 'default' }: CanvasViewportProps) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const activeTool = useWorkspaceStore((state) => state.activeTool);
   const setHoverProbe = useWorkspaceStore((state) => state.setHoverProbe);
@@ -96,7 +100,12 @@ export const CanvasViewport = () => {
   const [cursorHint, setCursorHint] = useState<string | null>(null);
   const [selectionBoxRect, setSelectionBoxRect] = useState<SelectionBoxRect | null>(null);
 
-  const canvasWidthClass = rightSidebarCollapsed ? 'max-w-[1080px]' : 'max-w-none';
+  const isExportVariant = variant === 'export';
+  const canvasWidthClass = isExportVariant
+    ? 'max-w-[820px]'
+    : rightSidebarCollapsed
+    ? 'max-w-[1080px]'
+    : 'max-w-none';
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -482,8 +491,10 @@ export const CanvasViewport = () => {
       return;
     }
     if (activeTool === 'line') {
-      handleLineInput(position, view, event.detail);
-      canvasRef.current?.setPointerCapture(event.pointerId);
+      if (!isExportVariant) {
+        handleLineInput(position, view, event.detail);
+        canvasRef.current?.setPointerCapture(event.pointerId);
+      }
       return;
     }
     if (activeTool === 'dot') {
@@ -615,7 +626,7 @@ export const CanvasViewport = () => {
         return;
       }
       const segment = hitTestSegment(position, view);
-      if (segment && event.detail >= 2) {
+      if (segment && event.detail >= 2 && !isExportVariant) {
         const state = useWorkspaceStore.getState();
         const path = state.paths.find((entry) => entry.meta.id === segment.pathId);
         if (path?.meta.kind !== 'reference') {
@@ -916,58 +927,62 @@ export const CanvasViewport = () => {
           }}
         />
       )}
-      <div className="pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-2xl border border-border bg-white/85 px-4 py-3 shadow">
-        <span className="text-[11px] font-semibold uppercase tracking-widest text-muted">Oxidation timeline</span>
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] text-muted">0%</span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={0.1}
-            value={oxidationProgress * 100}
-            className="pointer-events-auto accent-accent"
-            onChange={(event) => setOxidationProgress(Number(event.target.value) / 100)}
-          />
-          <span className="text-[11px] text-muted">100%</span>
+      {!isExportVariant && (
+        <div className="pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-2xl border border-border bg-white/85 px-4 py-3 shadow">
+          <span className="text-[11px] font-semibold uppercase tracking-widest text-muted">Oxidation timeline</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-muted">0%</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={0.1}
+              value={oxidationProgress * 100}
+              className="pointer-events-auto accent-accent"
+              onChange={(event) => setOxidationProgress(Number(event.target.value) / 100)}
+            />
+            <span className="text-[11px] text-muted">100%</span>
+          </div>
+          <span className="text-[11px] font-semibold text-text">{(oxidationProgress * 100).toFixed(1)}%</span>
         </div>
-        <span className="text-[11px] font-semibold text-text">{(oxidationProgress * 100).toFixed(1)}%</span>
-      </div>
-      {(activeTool === 'measure' || cursorHint) && (
+      )}
+      {!isExportVariant && (activeTool === 'measure' || cursorHint) && (
         <div className="pointer-events-none absolute left-4 top-4 rounded-xl bg-white/90 px-3 py-2 text-xs font-medium text-muted shadow">
           {activeTool === 'measure' ? 'Click & drag to measure (μm)' : cursorHint}
         </div>
       )}
-      <div className="pointer-events-none absolute bottom-4 right-4 flex flex-col items-end gap-2">
-        <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-border bg-white/85 px-3 py-2 shadow">
-          <button
-            type="button"
-            className="rounded-full border border-border bg-white px-2 py-1 text-xs font-semibold text-muted hover:bg-muted/10"
-            onClick={() => zoomBy(1 / ZOOM_STEP)}
-            disabled={zoom <= MIN_ZOOM + 1e-3}
-          >
-            −
-          </button>
-          <input
-            type="range"
-            min={MIN_ZOOM}
-            max={MAX_ZOOM}
-            step={0.05}
-            value={zoom}
-            onChange={(event) => setZoom(Number(event.target.value))}
-            className="h-1 w-32 accent-accent"
-          />
-          <button
-            type="button"
-            className="rounded-full border border-border bg-white px-2 py-1 text-xs font-semibold text-muted hover:bg-muted/10"
-            onClick={() => zoomBy(ZOOM_STEP)}
-            disabled={zoom >= MAX_ZOOM - 1e-3}
-          >
-            +
-          </button>
+      {!isExportVariant && (
+        <div className="pointer-events-none absolute bottom-4 right-4 flex flex-col items-end gap-2">
+          <div className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-border bg-white/85 px-3 py-2 shadow">
+            <button
+              type="button"
+              className="rounded-full border border-border bg-white px-2 py-1 text-xs font-semibold text-muted hover:bg-muted/10"
+              onClick={() => zoomBy(1 / ZOOM_STEP)}
+              disabled={zoom <= MIN_ZOOM + 1e-3}
+            >
+              −
+            </button>
+            <input
+              type="range"
+              min={MIN_ZOOM}
+              max={MAX_ZOOM}
+              step={0.05}
+              value={zoom}
+              onChange={(event) => setZoom(Number(event.target.value))}
+              className="h-1 w-32 accent-accent"
+            />
+            <button
+              type="button"
+              className="rounded-full border border-border bg-white px-2 py-1 text-xs font-semibold text-muted hover:bg-muted/10"
+              onClick={() => zoomBy(ZOOM_STEP)}
+              disabled={zoom >= MAX_ZOOM - 1e-3}
+            >
+              +
+            </button>
+          </div>
+          <span className="pointer-events-none text-[11px] font-semibold text-text">×{zoom.toFixed(2)}</span>
         </div>
-        <span className="pointer-events-none text-[11px] font-semibold text-text">×{zoom.toFixed(2)}</span>
-      </div>
+      )}
     </div>
   );
 };

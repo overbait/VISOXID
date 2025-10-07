@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import type {
   DirectionWeight,
+  ExportMeasurement,
+  ExportViewState,
   MeasurementProbe,
   MeasurementState,
   NodeSelection,
@@ -44,6 +46,7 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 const MAX_DOT_COUNT = 1000;
 const DEFAULT_DOT_COUNT = 240;
+const DEFAULT_MEASUREMENT_COLOR = '#1e3a8a';
 
 const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
 const clampZoom = (value: number): number => clamp(value, MIN_ZOOM, MAX_ZOOM);
@@ -145,6 +148,65 @@ const cloneMeasurementState = (measurements: MeasurementState): MeasurementState
   showHeatmap: measurements.showHeatmap,
 });
 
+const cloneExportMeasurement = (entry: ExportMeasurement): ExportMeasurement => ({
+  ...entry,
+  probe: {
+    ...entry.probe,
+    a: { ...entry.probe.a },
+    b: { ...entry.probe.b },
+  },
+});
+
+const cloneExportView = (view: ExportViewState): ExportViewState => ({
+  active: view.active,
+  previousTool: view.previousTool,
+  measurements: view.measurements.map((entry) => cloneExportMeasurement(entry)),
+  sequence: view.sequence,
+});
+
+const sanitizeExportView = (value: Partial<ExportViewState> | undefined): ExportViewState => {
+  if (!value) {
+    return {
+      active: false,
+      previousTool: null,
+      measurements: [],
+      sequence: 1,
+    };
+  }
+  const measurements = Array.isArray(value.measurements)
+    ? value.measurements
+        .map((entry) => {
+          if (!entry || typeof entry !== 'object') {
+            return null;
+          }
+          const probe = cloneMeasurementProbe((entry as ExportMeasurement).probe ?? null);
+          if (!probe) {
+            return null;
+          }
+          return {
+            id: (entry as ExportMeasurement).id ?? createId('export-measure'),
+            label: (entry as ExportMeasurement).label ?? 'M?',
+            color: typeof (entry as ExportMeasurement).color === 'string'
+              ? (entry as ExportMeasurement).color
+              : DEFAULT_MEASUREMENT_COLOR,
+            probe: {
+              ...probe,
+              id: (entry as ExportMeasurement).probe?.id ?? createId('probe'),
+            },
+          } satisfies ExportMeasurement;
+        })
+        .filter((entry): entry is ExportMeasurement => Boolean(entry))
+    : [];
+  const sequenceCandidate = Number((value.sequence ?? measurements.length + 1) as number);
+  const sequence = Number.isFinite(sequenceCandidate) ? Math.max(1, Math.round(sequenceCandidate)) : measurements.length + 1;
+  return {
+    active: Boolean(value.active),
+    previousTool: (value.previousTool ?? null) as ToolId | null,
+    measurements,
+    sequence,
+  };
+};
+
 const cloneStoredSceneState = (state: StoredSceneState): StoredSceneState => ({
   paths: state.paths.map(clonePath),
   selectedPathIds: [...state.selectedPathIds],
@@ -163,6 +225,7 @@ const cloneStoredSceneState = (state: StoredSceneState): StoredSceneState => ({
   oxidationDotCount: state.oxidationDotCount,
   directionalLinking: state.directionalLinking,
   panelCollapse: normalizePanelCollapse(state.panelCollapse),
+  exportView: cloneExportView(state.exportView),
 });
 
 const cloneStoredScene = (scene: StoredScene): StoredScene => ({
@@ -856,6 +919,12 @@ const createEmptyState = (library: StoredShape[] = [], scenes: StoredScene[] = [
     snapping: true,
     showHeatmap: true,
   },
+  exportView: {
+    active: false,
+    previousTool: null,
+    measurements: [],
+    sequence: 1,
+  },
   warnings: [],
   history: [],
   future: [],
@@ -921,6 +990,7 @@ const captureSnapshot = (state: WorkspaceState): WorkspaceSnapshot => ({
   zoom: state.zoom,
   pan: { ...state.pan },
   panelCollapse: normalizePanelCollapse(state.panelCollapse),
+  exportView: cloneExportView(state.exportView),
 });
 
 const captureSceneState = (state: WorkspaceState): StoredSceneState => ({
@@ -941,6 +1011,7 @@ const captureSceneState = (state: WorkspaceState): StoredSceneState => ({
   oxidationDotCount: state.oxidationDotCount,
   directionalLinking: state.directionalLinking,
   panelCollapse: normalizePanelCollapse(state.panelCollapse),
+  exportView: cloneExportView(state.exportView),
 });
 
 type PathUpdater = (nodes: PathNode[]) => PathNode[];
@@ -994,6 +1065,11 @@ type WorkspaceActions = {
   importState: (state: WorkspaceState) => void;
   reset: () => void;
   toggleSegmentCurve: (pathId: string, segmentIndex: number) => void;
+  openExportView: () => void;
+  closeExportView: () => void;
+  addExportMeasurement: (probe: MeasurementProbe) => void;
+  updateExportMeasurementColor: (id: string, color: string) => void;
+  removeExportMeasurement: (id: string) => void;
 };
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -1753,6 +1829,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         oxidationDotCount: clampDotCount(clonedScene.state.oxidationDotCount),
         directionalLinking: clonedScene.state.directionalLinking,
         panelCollapse: normalizePanelCollapse(clonedScene.state.panelCollapse),
+        exportView: sanitizeExportView(clonedScene.state.exportView),
         library: state.library.map(cloneStoredShape),
         scenes: state.scenes.map(cloneStoredScene),
         history: [],
@@ -1773,6 +1850,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         hoverProbe: null,
         pinnedProbe: null,
         dragProbe: null,
+      },
+      exportView: {
+        active: false,
+        previousTool: null,
+        measurements: [],
+        sequence: 1,
       },
       history: [],
       future: [],
@@ -1805,6 +1888,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         zoom: previous.zoom,
         pan: { ...previous.pan },
         panelCollapse: normalizePanelCollapse(previous.panelCollapse),
+        exportView: cloneExportView(previous.exportView),
       };
     });
   },
@@ -1831,6 +1915,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         zoom: snapshot.zoom,
         pan: { ...snapshot.pan },
         panelCollapse: normalizePanelCollapse(snapshot.panelCollapse),
+        exportView: cloneExportView(snapshot.exportView),
       };
     });
   },
@@ -1866,6 +1951,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         state.library.map(cloneStoredShape),
         state.scenes.map(cloneStoredScene),
       );
+      const exportView = sanitizeExportView(payload.exportView);
       return {
         ...base,
         ...payload,
@@ -1885,6 +1971,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         zoom: clampZoom(payload.zoom ?? 1),
         pan: payload.pan ?? { x: 0, y: 0 },
         panelCollapse: normalizePanelCollapse(payload.panelCollapse),
+        exportView,
       };
     }),
   reset: () =>
@@ -1963,4 +2050,81 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       };
     });
   },
+  openExportView: () =>
+    set((state) => {
+      if (state.exportView.active) {
+        return state;
+      }
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          active: true,
+          previousTool: state.activeTool,
+        },
+        activeTool: 'measure',
+      };
+    }),
+  closeExportView: () =>
+    set((state) => {
+      if (!state.exportView.active) {
+        return state;
+      }
+      const previousTool = state.exportView.previousTool ?? 'line';
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          active: false,
+          previousTool: null,
+        },
+        activeTool: previousTool,
+      };
+    }),
+  addExportMeasurement: (probe) =>
+    set((state) => {
+      const cloned = cloneMeasurementProbe(probe);
+      if (!cloned) {
+        return state;
+      }
+      const measurementProbe: MeasurementProbe = {
+        ...cloned,
+        id: createId('probe'),
+      };
+      const entry: ExportMeasurement = {
+        id: createId('export-measure'),
+        label: `M${state.exportView.sequence}`,
+        color: DEFAULT_MEASUREMENT_COLOR,
+        probe: measurementProbe,
+      };
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          measurements: [...state.exportView.measurements, entry],
+          sequence: state.exportView.sequence + 1,
+        },
+        dirty: true,
+      };
+    }),
+  updateExportMeasurementColor: (id, color) =>
+    set((state) => {
+      const next = state.exportView.measurements.map((entry) =>
+        entry.id === id ? { ...entry, color } : entry,
+      );
+      return {
+        ...state,
+        exportView: { ...state.exportView, measurements: next },
+        dirty: true,
+      };
+    }),
+  removeExportMeasurement: (id) =>
+    set((state) => ({
+      ...state,
+      exportView: {
+        ...state.exportView,
+        measurements: state.exportView.measurements.filter((entry) => entry.id !== id),
+      },
+      dirty: true,
+    })),
 }));
