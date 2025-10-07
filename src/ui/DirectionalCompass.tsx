@@ -531,19 +531,19 @@ export const DirectionalCompass = () => {
                   className="mt-1 rounded-full border border-border px-3 py-1 text-sm font-semibold text-text focus:border-accent focus:outline-none"
                 />
               </label>
-              <label className="flex flex-1 flex-col text-[11px] font-semibold text-muted">
+              <label className="flex min-w-0 flex-1 flex-col text-[11px] font-semibold text-muted">
                 Angle (°)
                 <input
                   type="number"
                   step={0.1}
                   value={selectedWeight.angleDeg.toFixed(1)}
                   onChange={(event) => handleAngleChange(selectedWeight.id, Number(event.target.value))}
-                  className="mt-1 rounded-full border border-border px-3 py-1 text-sm font-semibold text-text focus:border-accent focus:outline-none"
+                  className="mt-1 w-full rounded-full border border-border px-3 py-1 text-sm font-semibold text-text focus:border-accent focus:outline-none"
                 />
               </label>
             </div>
-            <div className="flex items-center gap-2 text-[11px] font-semibold text-muted">
-              <span className="w-20">Thickness</span>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold text-muted">
+              <span className="w-20 shrink-0">Thickness</span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -568,7 +568,7 @@ export const DirectionalCompass = () => {
                   +
                 </button>
               </div>
-              <span className="text-[11px] text-muted">μm</span>
+              <span className="shrink-0 text-[11px] text-muted">μm</span>
             </div>
             <div className="rounded-xl bg-accentSoft/40 px-3 py-2 text-[10px] text-muted">
               Delete removes the spoke. Angles wrap automatically; spokes cannot overlap closer than 0.5°.

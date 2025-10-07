@@ -14,6 +14,7 @@ import { useKeyboardShortcuts } from './ui/useKeyboardShortcuts';
 import { useWorkspaceStore } from './state';
 import { createId } from './utils/ids';
 import { createCircleNodes } from './utils/presets';
+import { SceneQuickActions } from './ui/SceneQuickActions';
 
 interface SidebarToggleButtonProps {
   collapsed: boolean;
@@ -93,6 +94,7 @@ export const App = () => {
           <div className="flex flex-col gap-4">
             <DirectionalCompass />
             <ToolPanel />
+            <SceneQuickActions />
             <ImportExportPanel />
             <GridMirrorPanel />
           </div>

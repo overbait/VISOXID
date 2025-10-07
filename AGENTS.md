@@ -268,3 +268,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - `evalThickness`/`evalThicknessForAngle` now respect the unlimited directional values. Don’t restore the old 10 μm clamp inside `src/geometry/thickness.ts`; the compass preview and geometry pipeline rely on the full range.
 
+
+## 2025-11-22 — Scene panel split & compass linking default
+- The Scene panel is now two cards: the upper card pairs segment mode toggles with the reference circle/oval controls, and the lower “Stored” card owns naming plus the scene/shape libraries. Keep delete/reset actions in the left rail’s quick-actions card rather than reintroducing them on the right.
+- `directionalLinking` defaults to `false` so the compass starts with per-spoke adjustments. When hydrating or resetting workspace state, continue using `false` unless the payload explicitly requests otherwise.

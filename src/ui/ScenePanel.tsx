@@ -16,8 +16,6 @@ export const ScenePanel = () => {
   const loadShape = useWorkspaceStore((state) => state.loadShapeFromLibrary);
   const loadStoredScene = useWorkspaceStore((state) => state.loadSceneFromLibrary);
   const importScene = useWorkspaceStore((state) => state.importSceneToLibrary);
-  const resetScene = useWorkspaceStore((state) => state.resetScene);
-  const removePath = useWorkspaceStore((state) => state.removePath);
   const addPath = useWorkspaceStore((state) => state.addPath);
   const pushWarning = useWorkspaceStore((state) => state.pushWarning);
   const nodeSelection = useWorkspaceStore((state) => state.nodeSelection);
@@ -165,254 +163,271 @@ export const ScenePanel = () => {
   return (
     <div className="panel flex flex-col gap-4 p-4 text-xs text-muted">
       <div className="section-title">Scene</div>
-      <div className="flex flex-col gap-3 text-xs">
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] uppercase tracking-wide text-muted">Name</span>
-          <input
-            type="text"
-            value={saveName}
-            onChange={(event) => setSaveName(event.target.value)}
-            placeholder={selectedPath ? selectedPath.meta.name : 'Untitled'}
-            className="rounded-xl border border-border bg-white/80 px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
-          />
-        </label>
-        <div className="grid grid-cols-2 gap-2">
-          <button type="button" className="toolbar-button" onClick={handleShapeSave} disabled={!selectedPath}>
-            Save shape
-          </button>
-          <button type="button" className="toolbar-button" onClick={handleSceneSave} disabled={paths.length === 0}>
-            Save scene
-          </button>
-        </div>
-        <button
-          type="button"
-          className="toolbar-button"
-          onClick={() => selectedPath && removePath(selectedPath.meta.id)}
-          disabled={!selectedPath}
-        >
-          Delete selected path
-        </button>
-        <button
-          type="button"
-          className="toolbar-button"
-          onClick={() => {
-            resetScene();
-          }}
-        >
-          Reset canvas
-        </button>
-        <button type="button" className="toolbar-button" onClick={handleAddReferenceCircle}>
-          Add reference circle
-        </button>
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] uppercase tracking-wide text-muted">Circle diameter (μm)</span>
-          <input
-            type="number"
-            min="0"
-            step="0.5"
-            value={referenceCircleDiameter}
-            onChange={(event) => setReferenceCircleDiameter(event.target.value)}
-            className="rounded-xl border border-border bg-white/80 px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
-          />
-        </label>
-        <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted">
-          <input
-            type="checkbox"
-            checked={referenceOvalEnabled}
-            onChange={(event) => {
-              setReferenceOvalEnabled(event.target.checked);
-              if (!event.target.checked) {
-                setReferenceOvalScale(1);
-              }
-            }}
-            className="h-4 w-4 rounded border border-border"
-          />
-          <span>Convert to oval</span>
-        </label>
-        {referenceOvalEnabled && (
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-wide text-muted">
-              Horizontal diameter (
-              {Number.isFinite(Number.parseFloat(referenceCircleDiameter))
-                ? `${(Number.parseFloat(referenceCircleDiameter) * referenceOvalScale).toFixed(1)} μm`
-                : '—'}
-              )
-            </span>
-            <input
-              type="range"
-              min={0.5}
-              max={2}
-              step={0.05}
-              value={referenceOvalScale}
-              onChange={(event) => setReferenceOvalScale(Number(event.target.value))}
-              className="accent-accent"
-            />
-            <div className="flex justify-between text-[10px] text-muted">
-              <span>50%</span>
-              <span>200%</span>
+      <div className="flex flex-col gap-4">
+        <div className="rounded-2xl border border-border/70 bg-white/70 p-4">
+          <div className="flex flex-col gap-4 text-xs text-muted">
+            <div className="flex flex-col gap-3">
+              <div className="text-[11px] uppercase tracking-wide text-muted">Line type</div>
+              {selectedPath && activeNode && selectedPath.meta.kind !== 'reference' ? (
+                <div className="flex flex-col gap-3 rounded-2xl border border-dashed border-border/70 bg-white/70 p-3">
+                  <div className="flex justify-between text-[11px] font-semibold text-text">
+                    <span>{activeNodeId?.slice(-6)}</span>
+                    <span>
+                      ({activeNode.point.x.toFixed(1)} μm, {activeNode.point.y.toFixed(1)} μm)
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className={`flex-1 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                        isBezierNode
+                          ? 'border-border text-muted hover:bg-border/20'
+                          : 'border-accent text-accent'
+                      }`}
+                      onClick={() =>
+                        selectedPath &&
+                        activeNode &&
+                        setNodeCurveMode(selectedPath.meta.id, activeNode.id, 'line')
+                      }
+                      disabled={!isBezierNode}
+                    >
+                      Straight
+                    </button>
+                    <button
+                      type="button"
+                      className={`flex-1 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                        isBezierNode
+                          ? 'border-accent text-accent'
+                          : 'border-border text-muted hover:bg-border/20'
+                      }`}
+                      onClick={() =>
+                        selectedPath &&
+                        activeNode &&
+                        setNodeCurveMode(selectedPath.meta.id, activeNode.id, 'bezier')
+                      }
+                      disabled={isBezierNode}
+                    >
+                      Bézier
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3 text-xs">
+                  Select a node to toggle between straight and Bézier segments.
+                </div>
+              )}
             </div>
-          </label>
-        )}
-      </div>
-      {selectedPath && activeNode && selectedPath.meta.kind !== 'reference' && (
-        <div className="flex flex-col gap-3 rounded-2xl border border-dashed border-border/70 bg-white/70 p-3 text-xs text-muted">
-          <div className="text-[11px] uppercase tracking-wide text-muted">Selected node</div>
-          <div className="flex justify-between text-[11px] font-semibold text-text">
-            <span>{activeNodeId?.slice(-6)}</span>
-            <span>
-              ({activeNode.point.x.toFixed(1)} μm, {activeNode.point.y.toFixed(1)} μm)
-            </span>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className={`flex-1 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                isBezierNode ? 'border-border text-muted hover:bg-border/20' : 'border-accent text-accent'
-              }`}
-              onClick={() => setNodeCurveMode(selectedPath.meta.id, activeNode.id, 'line')}
-              disabled={!isBezierNode}
-            >
-              Straight
-            </button>
-            <button
-              type="button"
-              className={`flex-1 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                isBezierNode ? 'border-accent text-accent' : 'border-border text-muted hover:bg-border/20'
-              }`}
-              onClick={() => setNodeCurveMode(selectedPath.meta.id, activeNode.id, 'bezier')}
-              disabled={isBezierNode}
-            >
-              Bézier
-            </button>
+            <div className="h-px bg-border/60" />
+            <div className="flex flex-col gap-3">
+              <div className="text-[11px] uppercase tracking-wide text-muted">Reference circle</div>
+              <button
+                type="button"
+                className="w-full rounded-xl border border-border bg-white/90 px-3 py-2 text-xs font-semibold text-text transition hover:border-accent hover:text-accent"
+                onClick={handleAddReferenceCircle}
+              >
+                Add reference circle
+              </button>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] uppercase tracking-wide text-muted">Circle diameter (μm)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={referenceCircleDiameter}
+                  onChange={(event) => setReferenceCircleDiameter(event.target.value)}
+                  className="rounded-xl border border-border bg-white/80 px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted">
+                <input
+                  type="checkbox"
+                  checked={referenceOvalEnabled}
+                  onChange={(event) => {
+                    setReferenceOvalEnabled(event.target.checked);
+                    if (!event.target.checked) {
+                      setReferenceOvalScale(1);
+                    }
+                  }}
+                  className="h-4 w-4 rounded border border-border"
+                />
+                <span>Convert to oval</span>
+              </label>
+              {referenceOvalEnabled && (
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] uppercase tracking-wide text-muted">
+                    Horizontal diameter (
+                    {Number.isFinite(Number.parseFloat(referenceCircleDiameter))
+                      ? `${(Number.parseFloat(referenceCircleDiameter) * referenceOvalScale).toFixed(1)} μm`
+                      : '—'}
+                    )
+                  </span>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.05}
+                    value={referenceOvalScale}
+                    onChange={(event) => setReferenceOvalScale(Number(event.target.value))}
+                    className="accent-accent"
+                  />
+                  <div className="flex justify-between text-[10px] text-muted">
+                    <span>50%</span>
+                    <span>200%</span>
+                  </div>
+                </label>
+              )}
+            </div>
           </div>
         </div>
-      )}
-      <div className="rounded-2xl border border-dashed border-border/70 bg-white/60 p-3">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-muted">
-            <span>Saved scenes</span>
-            <button
-              type="button"
-              className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
-              onClick={() => sceneImportInputRef.current?.click()}
-            >
-              Import scene
-            </button>
+        <div className="rounded-2xl border border-border/70 bg-white/80 p-4">
+          <div className="flex flex-col gap-4 text-xs">
+            <div className="text-[11px] uppercase tracking-wide text-muted">Stored</div>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] uppercase tracking-wide text-muted">Name</span>
+              <input
+                type="text"
+                value={saveName}
+                onChange={(event) => setSaveName(event.target.value)}
+                placeholder={selectedPath ? selectedPath.meta.name : 'Untitled'}
+                className="rounded-xl border border-border bg-white/80 px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" className="toolbar-button" onClick={handleShapeSave} disabled={!selectedPath}>
+                Save shape
+              </button>
+              <button type="button" className="toolbar-button" onClick={handleSceneSave} disabled={paths.length === 0}>
+                Save scene
+              </button>
+            </div>
+            <div className="h-px bg-border/60" />
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-wide text-muted">
+                <span>Saved scenes</span>
+                <button
+                  type="button"
+                  className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
+                  onClick={() => sceneImportInputRef.current?.click()}
+                >
+                  Import scene
+                </button>
+              </div>
+              {scenes.length === 0 ? (
+                <div className="text-xs">Capture a scene to preserve the full workspace configuration.</div>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {scenes.map((scene) => {
+                    const draft = sceneRenameDrafts[scene.id] ?? scene.name;
+                    return (
+                      <li key={scene.id} className="flex flex-col gap-2 rounded-xl bg-white/80 p-3 shadow-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="text"
+                            value={draft}
+                            onChange={(event) =>
+                              setSceneRenameDrafts((drafts) => ({ ...drafts, [scene.id]: event.target.value }))
+                            }
+                            onBlur={() => handleSceneRenameCommit(scene.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                handleSceneRenameCommit(scene.id);
+                                event.currentTarget.blur();
+                              }
+                            }}
+                            className="min-w-[140px] flex-1 rounded-lg border border-border bg-white/80 px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-lg border border-accent px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/10"
+                            onClick={() => loadStoredScene(scene.id)}
+                          >
+                            Load
+                          </button>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
+                            onClick={() => handleSceneExport(scene.id)}
+                          >
+                            Export
+                          </button>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
+                            onClick={() => removeScene(scene.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-2 text-[10px] uppercase tracking-widest text-muted">
+                          <span>{scene.state.paths.length} paths</span>
+                          <span>Saved {new Date(scene.updatedAt).toLocaleDateString()}</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <input
+                ref={sceneImportInputRef}
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={handleSceneImport}
+              />
+            </div>
+            <div className="h-px bg-border/60" />
+            <div className="flex flex-col gap-2">
+              <div className="text-[11px] uppercase tracking-wide text-muted">Saved shapes</div>
+              {library.length === 0 ? (
+                <div className="text-xs">Saved shapes will appear here. Capture any contour to reuse it later.</div>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {library.map((shape) => {
+                    const draft = shapeRenameDrafts[shape.id] ?? shape.name;
+                    return (
+                      <li key={shape.id} className="flex flex-col gap-2 rounded-xl bg-white/80 p-3 shadow-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type="text"
+                            value={draft}
+                            onChange={(event) =>
+                              setShapeRenameDrafts((drafts) => ({ ...drafts, [shape.id]: event.target.value }))
+                            }
+                            onBlur={() => handleShapeRenameCommit(shape.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') {
+                                handleShapeRenameCommit(shape.id);
+                                event.currentTarget.blur();
+                              }
+                            }}
+                            className="min-w-[140px] flex-1 rounded-lg border border-border bg-white/80 px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-lg border border-accent px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/10"
+                            onClick={() => loadShape(shape.id)}
+                          >
+                            Load
+                          </button>
+                          <button
+                            type="button"
+                            className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
+                            onClick={() => removeShape(shape.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap justify-between gap-2 text-[10px] uppercase tracking-widest text-muted">
+                          <span>{shape.nodes.length} pts</span>
+                          <span>Saved {new Date(shape.updatedAt).toLocaleDateString()}</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
-          {scenes.length === 0 ? (
-            <div className="text-xs">Capture a scene to preserve the full workspace configuration.</div>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {scenes.map((scene) => {
-                const draft = sceneRenameDrafts[scene.id] ?? scene.name;
-                return (
-                  <li key={scene.id} className="flex flex-col gap-2 rounded-xl bg-white/80 p-3 shadow-sm">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="text"
-                        value={draft}
-                        onChange={(event) =>
-                          setSceneRenameDrafts((drafts) => ({ ...drafts, [scene.id]: event.target.value }))
-                        }
-                        onBlur={() => handleSceneRenameCommit(scene.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            handleSceneRenameCommit(scene.id);
-                            event.currentTarget.blur();
-                          }
-                        }}
-                        className="min-w-[140px] flex-1 rounded-lg border border-border bg-white/80 px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-lg border border-accent px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/10"
-                        onClick={() => loadStoredScene(scene.id)}
-                      >
-                        Load
-                      </button>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
-                        onClick={() => handleSceneExport(scene.id)}
-                      >
-                        Export
-                      </button>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
-                        onClick={() => removeScene(scene.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap justify-between gap-2 text-[10px] uppercase tracking-widest text-muted">
-                      <span>{scene.state.paths.length} paths</span>
-                      <span>Saved {new Date(scene.updatedAt).toLocaleDateString()}</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          <input
-            ref={sceneImportInputRef}
-            type="file"
-            accept="application/json"
-            className="hidden"
-            onChange={handleSceneImport}
-          />
-        </div>
-        <div className="my-3 h-px bg-border/60" />
-        <div className="flex flex-col gap-2">
-          <div className="text-[11px] uppercase tracking-wide text-muted">Saved shapes</div>
-          {library.length === 0 ? (
-            <div className="text-xs">Saved shapes will appear here. Capture any contour to reuse it later.</div>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {library.map((shape) => {
-                const draft = shapeRenameDrafts[shape.id] ?? shape.name;
-                return (
-                  <li key={shape.id} className="flex flex-col gap-2 rounded-xl bg-white/80 p-3 shadow-sm">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="text"
-                        value={draft}
-                        onChange={(event) =>
-                          setShapeRenameDrafts((drafts) => ({ ...drafts, [shape.id]: event.target.value }))
-                        }
-                        onBlur={() => handleShapeRenameCommit(shape.id)}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') {
-                            handleShapeRenameCommit(shape.id);
-                            event.currentTarget.blur();
-                          }
-                        }}
-                        className="min-w-[140px] flex-1 rounded-lg border border-border bg-white/80 px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-lg border border-accent px-2 py-1 text-[11px] font-semibold text-accent hover:bg-accent/10"
-                        onClick={() => loadShape(shape.id)}
-                      >
-                        Load
-                      </button>
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-lg border border-border px-2 py-1 text-[11px] text-muted hover:bg-border/20"
-                        onClick={() => removeShape(shape.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap justify-between gap-2 text-[10px] uppercase tracking-widest text-muted">
-                      <span>{shape.nodes.length} pts</span>
-                      <span>Saved {new Date(shape.updatedAt).toLocaleDateString()}</span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
         </div>
       </div>
     </div>
