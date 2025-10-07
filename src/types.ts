@@ -1,4 +1,4 @@
-export type ToolId = 'select' | 'line' | 'dot' | 'measure' | 'pan' | 'erase';
+export type ToolId = 'select' | 'line' | 'dot' | 'measure' | 'pan' | 'rotate' | 'erase';
 
 export type PathKind = 'oxided' | 'reference';
 

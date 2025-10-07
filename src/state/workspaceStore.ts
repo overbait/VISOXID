@@ -955,6 +955,7 @@ type WorkspaceActions = {
   setSelected: (ids: string[]) => void;
   setNodeSelection: (selection: NodeSelection | null) => void;
   translatePaths: (pathIds: string[], delta: Vec2) => void;
+  rotatePaths: (pathIds: string[], center: Vec2, angleDeg: number) => void;
   deleteSelectedNodes: () => void;
   setNodeCurveMode: (pathId: string, nodeId: string, mode: 'line' | 'bezier') => void;
   updateGrid: (settings: Partial<WorkspaceState['grid']>) => void;
@@ -1260,6 +1261,56 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         );
       });
       if (!moved) {
+        return state;
+      }
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+      };
+    }),
+  rotatePaths: (pathIds, center, angleDeg) =>
+    set((state) => {
+      if (!pathIds.length) return state;
+      if (Math.abs(angleDeg) < 1e-6) return state;
+      const ids = new Set(pathIds);
+      let rotated = false;
+      const history = [...state.history, captureSnapshot(state)].slice(-50);
+      const radians = (angleDeg * Math.PI) / 180;
+      const cos = Math.cos(radians);
+      const sin = Math.sin(radians);
+      const rotatePoint = (point: Vec2 | null | undefined): Vec2 | null | undefined => {
+        if (!point) return point ?? null;
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        return {
+          x: center.x + dx * cos - dy * sin,
+          y: center.y + dx * sin + dy * cos,
+        };
+      };
+      const nextPaths = state.paths.map((path) => {
+        if (!ids.has(path.meta.id) || path.meta.locked) {
+          return path;
+        }
+        rotated = true;
+        const rotatedNodes = path.nodes.map((node) => ({
+          ...node,
+          point: rotatePoint(node.point)!,
+          handleIn: rotatePoint(node.handleIn),
+          handleOut: rotatePoint(node.handleOut),
+        }));
+        return runGeometryPipeline(
+          {
+            ...path,
+            nodes: rotatedNodes,
+            meta: { ...path.meta, updatedAt: Date.now() },
+          },
+          state.oxidationProgress,
+        );
+      });
+      if (!rotated) {
         return state;
       }
       return {

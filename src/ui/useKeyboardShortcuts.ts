@@ -7,6 +7,7 @@ const keyMap: Record<string, ToolId> = {
   l: 'line',
   d: 'dot',
   m: 'measure',
+  r: 'rotate',
 };
 
 export const useKeyboardShortcuts = () => {
