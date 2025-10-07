@@ -206,3 +206,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Workspace state now persists complete scene snapshots in `scenes`. Use `saveSceneToLibrary`/`loadSceneFromLibrary` for library interactions, and update `captureSceneState` plus the persistence helpers when adding new top-level store fields so saved scenes stay lossless.
 - DXF import promotes `CIRCLE`/`ARC` entities into Bézier-based nodes via `buildNodesFromDXFShape` (`createCircleNodes`/`createArcNodes`). Extend that pipeline for additional entity types to keep curvature intact instead of falling back to polylines.
 - The Scene panel splits saved scenes and shapes with shared rename/load affordances and exposes a diameter input under “Add reference circle”. Keep the copy control inside the tool grid and maintain the new left/right sidebar card order (grid tools on the left, scene management on the right).
+
+## 2025-11-11 — Multi-node marquee & oxide-edge hover reads
+
+- The Select tool now supports marquee selection by dragging from empty canvas space. Honour the `boxSelection` session in `CanvasViewport` when tweaking pointer handlers and keep Shift-drag additive to the existing node selection.
+- Node drags can move multiple anchors at once; grouped updates route through `translateNodeGroup` so handles shift together and history stays consistent. Avoid bypassing this helper when touching group-drag logic.
+- Hover measurements recognise hits on the oxidation edge as well as the outer contour. Preserve the combined inner/outer hit-testing so hover probes stay responsive even when pointing at the oxide boundary.

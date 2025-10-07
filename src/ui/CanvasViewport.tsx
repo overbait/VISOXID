@@ -4,7 +4,7 @@ import { createRenderer } from '../canvas/renderer';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
 import { distance, toDegrees } from '../utils/math';
-import type { PathEntity, SamplePoint, Vec2 } from '../types';
+import type { NodeSelection, PathEntity, SamplePoint, Vec2 } from '../types';
 import {
   canvasDistanceToWorld,
   canvasToWorld,
@@ -31,6 +31,13 @@ const pointSegmentDistance = (p: Vec2, a: Vec2, b: Vec2): number => {
   const closest = { x: a.x + ab.x * t, y: a.y + ab.y * t };
   return distance(p, closest);
 };
+
+interface SelectionBoxRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 const orderPathsBySelection = (paths: PathEntity[], selectedIds: string[]): PathEntity[] => {
   const selectedSet = new Set(selectedIds);
@@ -65,9 +72,21 @@ export const CanvasViewport = () => {
   const measureStart = useRef<{ origin: Vec2; moved: boolean } | null>(null);
   const dragTarget = useRef<DragTarget | null>(null);
   const selectionDrag = useRef<{ pathIds: string[]; last: Vec2; moved: boolean } | null>(null);
+  const multiNodeDrag = useRef<{
+    pathId: string;
+    nodeIds: string[];
+    nodeSet: Set<string>;
+    last: Vec2;
+  } | null>(null);
   const panSession = useRef<{ lastCanvas: Vec2 } | null>(null);
   const penDraft = useRef<{ pathId: string; activeEnd: 'start' | 'end' } | null>(null);
+  const boxSelection = useRef<{
+    originWorld: Vec2;
+    originCanvas: Vec2;
+    additive: boolean;
+  } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
+  const [selectionBoxRect, setSelectionBoxRect] = useState<SelectionBoxRect | null>(null);
 
   const canvasWidthClass = rightSidebarCollapsed ? 'max-w-[1080px]' : 'max-w-none';
 
@@ -178,14 +197,32 @@ export const CanvasViewport = () => {
     if (measureStart.current) return;
     const state = useWorkspaceStore.getState();
     const threshold = canvasDistanceToWorld(pathHitThresholdPx, view);
-    let closest: { sample: SamplePoint; distance: number } | null = null;
+    let closest:
+      | {
+          sample: SamplePoint;
+          distance: number;
+          innerPoint: Vec2;
+          near: 'inner' | 'outer';
+        }
+      | null = null;
     for (const path of state.paths) {
       if (path.meta.kind === 'reference') continue;
       const samples = path.sampled?.samples ?? [];
       for (const sample of samples) {
-        const dist = distance(position, sample.position);
-        if (dist <= threshold && (!closest || dist < closest.distance)) {
-          closest = { sample, distance: dist };
+        const innerPoint = {
+          x: sample.position.x - sample.normal.x * sample.thickness,
+          y: sample.position.y - sample.normal.y * sample.thickness,
+        };
+        const outerDist = distance(position, sample.position);
+        const innerDist = distance(position, innerPoint);
+        const bestDist = Math.min(outerDist, innerDist);
+        if (bestDist <= threshold && (!closest || bestDist < closest.distance)) {
+          closest = {
+            sample,
+            distance: bestDist,
+            innerPoint,
+            near: innerDist < outerDist ? 'inner' : 'outer',
+          };
         }
       }
     }
@@ -222,12 +259,14 @@ export const CanvasViewport = () => {
         x: sample.position.x + unit.x * thickness,
         y: sample.position.y + unit.y * thickness,
       };
+      const startPoint = closest.near === 'inner' ? inner : sample.position;
+      const endPoint = closest.near === 'inner' ? sample.position : inner;
       setHoverProbe({
         id: 'hover',
-        a: sample.position,
-        b: inner,
+        a: startPoint,
+        b: endPoint,
         distance: thickness,
-        angleDeg: toDegrees(Math.atan2(inner.y - sample.position.y, inner.x - sample.position.x)),
+        angleDeg: toDegrees(Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x)),
         thicknessA: thickness,
         thicknessB: thickness,
       });
@@ -387,6 +426,31 @@ export const CanvasViewport = () => {
     setNodeSelection({ pathId: path.meta.id, nodeIds: [newNode.id] });
   };
 
+  const translateNodeGroup = (pathId: string, nodeSet: Set<string>, delta: Vec2) => {
+    if (Math.abs(delta.x) < 1e-6 && Math.abs(delta.y) < 1e-6) {
+      return;
+    }
+    updatePath(pathId, (nodes) => {
+      const shiftHandle = (handle: Vec2 | null | undefined): Vec2 | null | undefined => {
+        if (handle === null || handle === undefined) {
+          return handle;
+        }
+        return { x: handle.x + delta.x, y: handle.y + delta.y };
+      };
+      return nodes.map((node) => {
+        if (!nodeSet.has(node.id)) {
+          return node;
+        }
+        return {
+          ...node,
+          point: { x: node.point.x + delta.x, y: node.point.y + delta.y },
+          handleIn: shiftHandle(node.handleIn),
+          handleOut: shiftHandle(node.handleOut),
+        };
+      });
+    });
+  };
+
   const handlePointerDown = (event: PointerEvent<HTMLCanvasElement>) => {
     const { world: position, canvas, view } = getPointerContext(event);
     if (activeTool === 'measure') {
@@ -441,7 +505,60 @@ export const CanvasViewport = () => {
     if (activeTool === 'select') {
       const target = hitTestNodes(position, view);
       if (target) {
+        const state = useWorkspaceStore.getState();
+        const path = state.paths.find((entry) => entry.meta.id === target.pathId);
+        if (target.kind === 'anchor' && path) {
+          const currentSelection =
+            state.nodeSelection && state.nodeSelection.pathId === target.pathId
+              ? [...state.nodeSelection.nodeIds]
+              : [];
+          let nextIds: string[];
+          if (event.shiftKey) {
+            if (currentSelection.includes(target.nodeId)) {
+              nextIds = currentSelection.filter((id) => id !== target.nodeId);
+            } else if (!currentSelection.length && state.nodeSelection && state.nodeSelection.pathId !== target.pathId) {
+              nextIds = [target.nodeId];
+            } else {
+              nextIds = [...currentSelection, target.nodeId];
+            }
+          } else {
+            nextIds =
+              currentSelection.length > 1 && currentSelection.includes(target.nodeId)
+                ? currentSelection
+                : [target.nodeId];
+          }
+          const orderedIds = path.nodes
+            .map((node) => node.id)
+            .filter((id) => nextIds.includes(id));
+          if (!orderedIds.length) {
+            setNodeSelection(null);
+            if (!event.shiftKey) {
+              setSelected([]);
+            }
+            dragTarget.current = null;
+            multiNodeDrag.current = null;
+            return;
+          }
+          setSelected([target.pathId]);
+          setNodeSelection({ pathId: target.pathId, nodeIds: orderedIds });
+          if (orderedIds.length > 1) {
+            multiNodeDrag.current = {
+              pathId: target.pathId,
+              nodeIds: orderedIds,
+              nodeSet: new Set(orderedIds),
+              last: position,
+            };
+            dragTarget.current = null;
+          } else {
+            multiNodeDrag.current = null;
+            dragTarget.current = target;
+            updateGeometryForDrag(target, position);
+          }
+          canvasRef.current?.setPointerCapture(event.pointerId);
+          return;
+        }
         dragTarget.current = target;
+        multiNodeDrag.current = null;
         setSelected([target.pathId]);
         setNodeSelection({ pathId: target.pathId, nodeIds: [target.nodeId] });
         updateGeometryForDrag(target, position);
@@ -473,10 +590,18 @@ export const CanvasViewport = () => {
           return;
         }
         return;
-      } else if (!event.shiftKey) {
+      }
+      if (!event.shiftKey) {
         setSelected([]);
         setNodeSelection(null);
       }
+      boxSelection.current = {
+        originWorld: position,
+        originCanvas: canvas,
+        additive: event.shiftKey,
+      };
+      setSelectionBoxRect({ x: canvas.x, y: canvas.y, width: 0, height: 0 });
+      canvasRef.current?.setPointerCapture(event.pointerId);
       return;
     }
   };
@@ -523,6 +648,25 @@ export const CanvasViewport = () => {
       return;
     }
     if (activeTool === 'select') {
+      if (boxSelection.current) {
+        const origin = boxSelection.current.originCanvas;
+        setSelectionBoxRect({
+          x: Math.min(origin.x, canvas.x),
+          y: Math.min(origin.y, canvas.y),
+          width: Math.abs(canvas.x - origin.x),
+          height: Math.abs(canvas.y - origin.y),
+        });
+        return;
+      }
+      if (multiNodeDrag.current) {
+        const session = multiNodeDrag.current;
+        const delta = { x: position.x - session.last.x, y: position.y - session.last.y };
+        if (Math.abs(delta.x) > 1e-6 || Math.abs(delta.y) > 1e-6) {
+          translateNodeGroup(session.pathId, session.nodeSet, delta);
+          session.last = position;
+        }
+        return;
+      }
       if (dragTarget.current) {
         updateGeometryForDrag(dragTarget.current, position);
         return;
@@ -545,6 +689,7 @@ export const CanvasViewport = () => {
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLCanvasElement>) => {
+    const { world: position } = getPointerContext(event);
     if (activeTool === 'measure') {
       if (measureStart.current) {
         if (measureStart.current.moved && measurements.dragProbe) {
@@ -568,9 +713,64 @@ export const CanvasViewport = () => {
       canvasRef.current?.releasePointerCapture(event.pointerId);
       return;
     }
+    if (activeTool === 'select' && boxSelection.current) {
+      const session = boxSelection.current;
+      const minX = Math.min(session.originWorld.x, position.x);
+      const maxX = Math.max(session.originWorld.x, position.x);
+      const minY = Math.min(session.originWorld.y, position.y);
+      const maxY = Math.max(session.originWorld.y, position.y);
+      const state = useWorkspaceStore.getState();
+      const hits = state.paths
+        .filter((path) => path.meta.kind !== 'reference')
+        .map((path) => {
+          const nodeIds = path.nodes
+            .filter(
+              (node) =>
+                node.point.x >= minX &&
+                node.point.x <= maxX &&
+                node.point.y >= minY &&
+                node.point.y <= maxY,
+            )
+            .map((node) => node.id);
+          return { path, nodeIds };
+        })
+        .filter((entry) => entry.nodeIds.length > 0);
+      const currentSelection = state.nodeSelection;
+      let chosen: NodeSelection | null = null;
+      if (session.additive && currentSelection) {
+        const match = hits.find((entry) => entry.path.meta.id === currentSelection.pathId);
+        if (match) {
+          const combined = new Set([...currentSelection.nodeIds, ...match.nodeIds]);
+          const ordered = match.path.nodes
+            .map((node) => node.id)
+            .filter((id) => combined.has(id));
+          chosen = { pathId: match.path.meta.id, nodeIds: ordered };
+        } else if (hits.length) {
+          const largest = hits.reduce((a, b) => (b.nodeIds.length > a.nodeIds.length ? b : a));
+          chosen = { pathId: largest.path.meta.id, nodeIds: largest.nodeIds };
+        }
+      } else if (hits.length) {
+        const largest = hits.reduce((a, b) => (b.nodeIds.length > a.nodeIds.length ? b : a));
+        chosen = { pathId: largest.path.meta.id, nodeIds: largest.nodeIds };
+      }
+      if (chosen) {
+        setSelected([chosen.pathId]);
+        setNodeSelection(chosen);
+      } else if (!session.additive) {
+        setSelected([]);
+        setNodeSelection(null);
+      }
+      setSelectionBoxRect(null);
+      boxSelection.current = null;
+    }
     selectionDrag.current = null;
     panSession.current = null;
     dragTarget.current = null;
+    multiNodeDrag.current = null;
+    if (!boxSelection.current) {
+      setSelectionBoxRect(null);
+    }
+    boxSelection.current = null;
     canvasRef.current?.releasePointerCapture(event.pointerId);
   };
 
@@ -602,6 +802,9 @@ export const CanvasViewport = () => {
     if (activeTool !== 'select') {
       selectionDrag.current = null;
       dragTarget.current = null;
+      multiNodeDrag.current = null;
+      boxSelection.current = null;
+      setSelectionBoxRect(null);
     }
     if (activeTool !== 'pan') {
       panSession.current = null;
@@ -624,6 +827,17 @@ export const CanvasViewport = () => {
         onPointerLeave={handlePointerUp}
         onWheel={handleWheel}
       />
+      {selectionBoxRect && (
+        <div
+          className="pointer-events-none absolute rounded-md border border-accent/60 bg-accent/10"
+          style={{
+            left: `${selectionBoxRect.x}px`,
+            top: `${selectionBoxRect.y}px`,
+            width: `${selectionBoxRect.width}px`,
+            height: `${selectionBoxRect.height}px`,
+          }}
+        />
+      )}
       <div className="pointer-events-none absolute bottom-4 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2 rounded-2xl border border-border bg-white/85 px-4 py-3 shadow">
         <span className="text-[11px] font-semibold uppercase tracking-widest text-muted">Oxidation timeline</span>
         <div className="flex items-center gap-3">
