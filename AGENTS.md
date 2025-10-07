@@ -247,3 +247,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 - A `start-dev.sh` script now bootstraps dependencies (if `node_modules` is missing), launches `npm run dev` with overridable `HOST`/`PORT`, waits for the server to respond, and opens the workspace URL in the default browser. It streams logs until you exit; feel free to pass extra Vite flags via `VITE_DEV_ARGS`.
 
+## 2025-11-18 — Canvas backing-store rounding fix
+
+- Canvas resizing now rounds the backing-store dimensions **upwards** (`Math.ceil`) when applying device-pixel ratio scaling. This prevents sub-pixel gutters from accumulating stale frame data along the lower-right edge. Keep using ceiling rounding if you touch `CanvasRenderer.resize()` so the render loop always clears the full visible surface.
+

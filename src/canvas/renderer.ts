@@ -55,8 +55,8 @@ export class CanvasRenderer {
 
   private resize(): void {
     const { width, height } = this.canvas.getBoundingClientRect();
-    const pixelWidth = Math.max(1, Math.floor(width * this.dpr));
-    const pixelHeight = Math.max(1, Math.floor(height * this.dpr));
+    const pixelWidth = Math.max(1, Math.ceil(width * this.dpr));
+    const pixelHeight = Math.max(1, Math.ceil(height * this.dpr));
     if (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight) {
       this.canvas.width = pixelWidth;
       this.canvas.height = pixelHeight;
