@@ -14,7 +14,7 @@ The development server runs on <http://localhost:5173> by default.
 ## Available Scripts
 
 - `npm run dev` – start the Vite development server.
-- `npm run build` – type-check and build the production bundle.
+- `npm run build` – type-check and build the production bundle. The resulting `dist/index.html` can be opened directly from the filesystem for offline review.
 - `npm run preview` – preview a production build locally.
 - `npm run lint` – run ESLint over the source files.
 
@@ -34,3 +34,11 @@ Tailwind CSS powers the light, minimalist UI theme. Global styles live in `src/i
 ## Import / Export
 
 Use the Project panel within the app to export or import JSON project files. PNG and SVG export buttons currently provide informative stubs for future integrations.
+
+## Running without a local server
+
+To load the workbench from disk without the Vite dev server:
+
+1. Install dependencies with `npm install` (one time).
+2. Run `npm run build` to create the production bundle under `dist/`.
+3. Open `dist/index.html` in a modern browser. All bundle paths are now relative, so the app runs correctly when launched via the `file://` protocol.

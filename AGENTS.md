@@ -243,3 +243,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Saved export measurements render distance-only callouts on the canvas. When extending measurement drawing, keep export mode hiding labels/angles for saved entries so captures stay clean.
 - Scene library entries can be exported/imported as JSON bundles. Use `handleSceneExport`/`importSceneToLibrary` for new entry points so the `{ version: 1, scene }` payload remains consistent and sanitisation stays centralised.
 
+## 2025-11-20 — Offline bundle support
+
+- Vite now builds with `base: './'` so production assets resolve when opening `dist/index.html` via the `file://` protocol. Preserve this base when adjusting the config or relative paths will break offline launches.
+- The README documents the offline workflow (build then open the generated HTML). Keep those steps accurate if the build output or folder structure changes.
+
