@@ -79,6 +79,20 @@ export interface StoredShape {
   updatedAt: number;
 }
 
+export interface ExportMeasurement {
+  id: string;
+  label: string;
+  color: string;
+  probe: MeasurementProbe;
+}
+
+export interface ExportViewState {
+  active: boolean;
+  previousTool: ToolId | null;
+  measurements: ExportMeasurement[];
+  sequence: number;
+}
+
 export interface StoredSceneState {
   paths: PathEntity[];
   selectedPathIds: string[];
@@ -95,6 +109,7 @@ export interface StoredSceneState {
   oxidationDotCount: number;
   directionalLinking: boolean;
   panelCollapse: PanelCollapseState;
+  exportView: ExportViewState;
 }
 
 export interface StoredScene {
@@ -171,6 +186,7 @@ export interface WorkspaceSnapshot {
   zoom: number;
   pan: Vec2;
   panelCollapse: PanelCollapseState;
+  exportView: ExportViewState;
 }
 
 export interface WorkspaceState {
@@ -196,6 +212,7 @@ export interface WorkspaceState {
   scenes: StoredScene[];
   zoom: number;
   panelCollapse: PanelCollapseState;
+  exportView: ExportViewState;
 }
 
 export interface ExportedProject {

@@ -218,3 +218,22 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - `drawOxidationDots` now clips each rendered dot against its closed contour so the exterior half stays invisible. When touching this overlay, keep the per-variant canvas `clip()` guard so mirrored paths inherit the same masking without leaking across shapes.
 - Only closed paths provide a clip polygon; open traces still render the full dot glyph. Preserve this distinction so open-line previews keep showing both sides of the stroke.
 
+## 2025-11-13 — Export overview workspace & measurement palette
+
+- The “Export PNG” placeholder became a full export overview. `openExportView`/`closeExportView` toggle a read-only layout that reuses the canvas in presentation mode, locks the tool to measurement by default, and restores the previous tool on exit. Use these store actions whenever you need to enter or leave the export workspace so the UI stays in sync.
+- Export mode renders through `<CanvasViewport variant="export" />`, which suppresses zoom/timeline overlays. Pass the variant instead of cloning the viewport if you need the stripped-down canvas elsewhere.
+- Directional headings now expose a summary compass (`ExportView.tsx`) that mirrors the live weights but pins numeric labels around the rim. Keep the label underline colour in sync with `valueToColor` so screenshots remain legible.
+- Measurements can be saved for export via `exportView.measurements`. Add entries by calling `addExportMeasurement` with a captured `MeasurementProbe`, update colours through `updateExportMeasurementColor`, and remove with `removeExportMeasurement`. Saved probes clone coordinates and receive fresh ids; avoid mutating them in place.
+- Canvas measurement strokes now default to the darker `#1e3a8a` tone to avoid clashing with oxidation dots. Match this hue for any new measurement-related UI to keep styling consistent.
+
+## 2025-11-14 — Export overview layout refinements
+
+- The export compass now renders in a compact 260 px frame with numeric μm labels only. Keep the per-heading underline colours in sync with `valueToColor` and avoid reintroducing compass progress readouts.
+- Export overview’s secondary summary collapsed into the dedicated uniform thickness card—surface extra oxidation metadata elsewhere if needed, but leave this screen focused on the single baseline metric.
+- `<CanvasViewport variant="export" />` should remain editing-neutral: double-click segment toggles stay disabled and the canvas gets the wider 820 px max width so it dominates the layout. Respect these guards when extending export interactions.
+
+## 2025-11-15 — Export capture polish
+
+- Export mode should omit node anchors and Bézier handles entirely. Guard `drawHandles` so the canvas is free of editing affordances while `exportView.active` is true.
+- Compass labels in the export overview must stay on a single line (`value μm`). Preserve the `whitespace-nowrap` styling (or equivalent) when adjusting the markup so right-hand headings don’t wrap.
+
