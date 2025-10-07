@@ -237,3 +237,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Export mode should omit node anchors and Bézier handles entirely. Guard `drawHandles` so the canvas is free of editing affordances while `exportView.active` is true.
 - Compass labels in the export overview must stay on a single line (`value μm`). Preserve the `whitespace-nowrap` styling (or equivalent) when adjusting the markup so right-hand headings don’t wrap.
 
+## 2025-11-16 — Export data capture & scene interchange
+
+- Export overview labels now support directional-only and total (directional + uniform) readouts via a toggle in the compass card. Keep the control present when touching this view so screenshot authors can switch modes.
+- Saved export measurements render distance-only callouts on the canvas. When extending measurement drawing, keep export mode hiding labels/angles for saved entries so captures stay clean.
+- Scene library entries can be exported/imported as JSON bundles. Use `handleSceneExport`/`importSceneToLibrary` for new entry points so the `{ version: 1, scene }` payload remains consistent and sanitisation stays centralised.
+

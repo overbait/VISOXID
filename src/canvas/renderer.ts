@@ -104,7 +104,13 @@ export class CanvasRenderer {
       }
     });
     drawSnaps(this.ctx, state.paths, state.measurements, view);
-    drawMeasurements(this.ctx, state.measurements, view, state.exportView.measurements);
+    drawMeasurements(
+      this.ctx,
+      state.measurements,
+      view,
+      state.exportView.measurements,
+      exportMode,
+    );
     this.ctx.restore();
   }
 }

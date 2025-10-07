@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { CanvasViewport } from './CanvasViewport';
 import { useWorkspaceStore } from '../state';
 import type { DirectionWeight } from '../types';
@@ -56,6 +56,11 @@ const polarToCartesian = (angleRad: number, radius: number): { x: number; y: num
 const ExportCompass = () => {
   const defaults = useWorkspaceStore((state) => state.oxidationDefaults);
   const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
+  const [displayMode, setDisplayMode] = useState<'directional' | 'total'>('directional');
+
+  const toggleDisplayMode = () => {
+    setDisplayMode((mode) => (mode === 'directional' ? 'total' : 'directional'));
+  };
 
   const weights = useMemo(
     () => sortByAngle(defaults.thicknessByDirection.items),
@@ -101,9 +106,22 @@ const ExportCompass = () => {
 
   return (
     <div className="rounded-3xl border border-border bg-white/80 p-5 shadow-panel">
-      <div>
-        <h2 className="text-base font-semibold">Directional weights</h2>
-        <p className="text-xs text-muted">Oxide profile snapshot</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Directional weights</h2>
+          <p className="text-xs text-muted">
+            {displayMode === 'directional'
+              ? 'Showing configured offsets per heading.'
+              : 'Showing offsets plus the uniform baseline.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="rounded-full border border-border px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted transition hover:border-accent hover:text-accent"
+          onClick={toggleDisplayMode}
+        >
+          {displayMode === 'directional' ? 'Show totals' : 'Show offsets'}
+        </button>
       </div>
       <div
         className="relative mx-auto mt-4 flex items-center justify-center"
@@ -187,6 +205,10 @@ const ExportCompass = () => {
           const labelRadius = preview.maxRadius + 20;
           const position = polarToCartesian(angleRad, Math.max(labelRadius, OUTER_RADIUS + 20));
           const color = valueToColor(weight.valueUm);
+          const labelValue =
+            displayMode === 'directional'
+              ? weight.valueUm
+              : weight.valueUm + defaults.thicknessUniformUm;
           return (
             <div
               key={`label-${weight.id}`}
@@ -197,7 +219,7 @@ const ExportCompass = () => {
                 className="rounded-full px-2 py-1 whitespace-nowrap"
                 style={{ borderBottom: `2px solid ${color}`, backgroundColor: 'rgba(255,255,255,0.92)' }}
               >
-                {weight.valueUm.toFixed(1)} μm
+                {labelValue.toFixed(1)} μm
               </span>
             </div>
           );

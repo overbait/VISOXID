@@ -7,6 +7,7 @@ export const drawMeasurements = (
   measurements: MeasurementState,
   view: ViewTransform,
   saved: ExportMeasurement[] = [],
+  exportMode = false,
 ): void => {
   ctx.save();
   const entries: Array<
@@ -54,7 +55,9 @@ export const drawMeasurements = (
     const angleLabel = `${toDegrees(Math.atan2(probe.b.y - probe.a.y, probe.b.x - probe.a.x)).toFixed(1)}°`;
     const toneVariant = tone === 'hover' ? 'subtle' : 'strong';
     const text = tone === 'saved'
-      ? `${label ?? ''} • ${distanceLabel} • ${angleLabel}`.replace(/^\s*•\s*/, '')
+      ? exportMode
+        ? distanceLabel
+        : `${label ?? ''} • ${distanceLabel} • ${angleLabel}`.replace(/^\s*•\s*/, '')
       : `${distanceLabel} • ${angleLabel}`;
     drawLabel(ctx, midX, midY, text, toneVariant, tone === 'saved' ? color : undefined);
   });
