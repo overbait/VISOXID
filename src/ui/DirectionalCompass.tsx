@@ -168,11 +168,14 @@ export const DirectionalCompass = () => {
         if (index === -1) return next;
         const clamped = clampValue(value);
         if (linking && next.length > 0) {
-          const delta = clamped - next[index].valueUm;
-          return next.map((item) => ({
-            ...item,
-            valueUm: clampValue(item.valueUm + delta),
-          }));
+          const currentValue = next[index].valueUm;
+          if (currentValue > 0) {
+            const ratio = clamped / currentValue;
+            return next.map((item) => ({
+              ...item,
+              valueUm: clampValue(item.valueUm * ratio),
+            }));
+          }
         }
         next[index] = { ...next[index], valueUm: clamped };
         return next;
@@ -364,7 +367,7 @@ export const DirectionalCompass = () => {
               linking ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent'
             }`}
             onClick={() => setLinking(!linking)}
-            title={linking ? 'Linked adjustments enabled' : 'Linked adjustments disabled'}
+            title={linking ? 'Proportional adjustments enabled' : 'Proportional adjustments disabled'}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path
