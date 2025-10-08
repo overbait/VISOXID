@@ -200,3 +200,8 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - The path type selector now lives on the right rail beneath the Oxidation card. Keep its mixed-selection banner and reuse `setPathType` so undo/redo and the geometry pipeline stay consistent when flipping modes.
 - DXF import now approximates `ARC` and `CIRCLE` entities into polylines (64 segments for a full circle). Preserve this conversion so guides from AutoCAD round-trip without manual edits, and keep centring the result in the 50 μm workspace before adding paths.
 - The canvas centre column no longer hard-limits its width when the sidebar is expanded, ensuring the gap matches the left rail, and zoom tops out at ×4. Honour these bounds when adjusting layout or viewport behaviour.
+
+## 2025-11-10 — Proportional compass linking
+
+- Compass “linked adjustments” now scale proportionally: when one heading doubles, all other headings double too. Preserve the guard that skips propagation if the source value is ≤ 0 so zeroed spokes don’t rescale the rest of the compass.
+- The toggle tooltip now reads “Proportional adjustments enabled/disabled”. Match this wording in future UI tweaks so users understand the proportional behaviour.
