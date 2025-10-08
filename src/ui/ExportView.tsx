@@ -3,6 +3,7 @@ import { CanvasViewport } from './CanvasViewport';
 import { useWorkspaceStore } from '../state';
 import type { DirectionWeight } from '../types';
 import { evalThicknessForAngle } from '../geometry';
+import { directionalValueToColor } from '../utils/directionalColor';
 
 const CANVAS_SIZE = 260;
 const OUTER_RADIUS = CANVAS_SIZE / 2 - 20;
@@ -13,34 +14,6 @@ const toRadians = (value: number): number => (value * Math.PI) / 180;
 
 const sortByAngle = (items: DirectionWeight[]): DirectionWeight[] =>
   [...items].sort((a, b) => a.angleDeg - b.angleDeg);
-
-const interpolate = (start: number[], end: number[], t: number): number[] => [
-  start[0] + (end[0] - start[0]) * t,
-  start[1] + (end[1] - start[1]) * t,
-  start[2] + (end[2] - start[2]) * t,
-];
-
-const gradientStops: { stop: number; color: number[] }[] = [
-  { stop: 0, color: [37, 99, 235] },
-  { stop: 0.35, color: [34, 197, 94] },
-  { stop: 0.7, color: [250, 204, 21] },
-  { stop: 1, color: [239, 68, 68] },
-];
-
-const valueToColor = (value: number): string => {
-  const t = Math.min(Math.max(value / 10, 0), 1);
-  for (let i = 0; i < gradientStops.length - 1; i += 1) {
-    const current = gradientStops[i];
-    const next = gradientStops[i + 1];
-    if (t >= current.stop && t <= next.stop) {
-      const span = (t - current.stop) / (next.stop - current.stop || 1);
-      const [r, g, b] = interpolate(current.color, next.color, span);
-      return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
-    }
-  }
-  const last = gradientStops.at(-1)!;
-  return `rgb(${last.color.map((c) => Math.round(c)).join(', ')})`;
-};
 
 const spokeRadiusForValue = (value: number): number => {
   const ratio = Math.min(Math.max(value / 10, 0), 1);
@@ -185,7 +158,7 @@ const ExportCompass = () => {
             const angleRad = toRadians(weight.angleDeg);
             const start = polarToCartesian(angleRad, MIN_SPOKE_RADIUS - 10);
             const end = polarToCartesian(angleRad, spokeRadiusForValue(weight.valueUm * oxidationProgress));
-            const color = valueToColor(weight.valueUm);
+            const color = directionalValueToColor(weight.valueUm);
             return (
               <line
                 key={weight.id}
@@ -204,7 +177,7 @@ const ExportCompass = () => {
           const angleRad = toRadians(weight.angleDeg);
           const labelRadius = preview.maxRadius + 20;
           const position = polarToCartesian(angleRad, Math.max(labelRadius, OUTER_RADIUS + 20));
-          const color = valueToColor(weight.valueUm);
+          const color = directionalValueToColor(weight.valueUm);
           const labelValue =
             displayMode === 'directional'
               ? weight.valueUm

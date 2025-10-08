@@ -275,3 +275,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 ## 2025-11-23 — Proportional compass scaling
 - The compass toggle now reads “Proportional adjustments” and, when enabled, changing the uniform thickness rescales every directional weight by `newUniform / oldUniform`. Keep this behaviour in `applyGlobalOxidation` and guard against division by zero by skipping the rescale when the prior uniform thickness is zero. Manual heading edits should not ripple to other directions regardless of the toggle state.
+
+## 2025-11-24 — Oxidation dot colour linking
+- Oxidation dots on the canvas now reuse the compass colour gradient, with each dot sampling the directional component at its outward normal. When adjusting dot rendering, continue to route colour selection through `directionalValueToColor` so compass and canvas stay aligned.
+- `collectDotCenters` now returns interpolated normals alongside positions to support the colour mapping. Preserve this structure (position + angle) when reworking distribution so dot hues keep following the local heading.
