@@ -91,8 +91,12 @@ const smallestAngleDelta = (a: number, b: number): number => {
 export const DirectionalCompass = () => {
   const defaults = useWorkspaceStore((state) => state.oxidationDefaults);
   const updateDefaults = useWorkspaceStore((state) => state.updateOxidationDefaults);
-  const linking = useWorkspaceStore((state) => state.directionalLinking);
-  const setLinking = useWorkspaceStore((state) => state.setDirectionalLinking);
+  const proportionalAdjustmentsEnabled = useWorkspaceStore(
+    (state) => state.directionalLinking,
+  );
+  const setProportionalAdjustmentsEnabled = useWorkspaceStore(
+    (state) => state.setDirectionalLinking,
+  );
   const openExportView = useWorkspaceStore((state) => state.openExportView);
   const oxidationProgress = useWorkspaceStore((state) => state.oxidationProgress);
 
@@ -167,18 +171,11 @@ export const DirectionalCompass = () => {
         const index = next.findIndex((item) => item.id === id);
         if (index === -1) return next;
         const clamped = clampValue(value);
-        if (linking && next.length > 0) {
-          const delta = clamped - next[index].valueUm;
-          return next.map((item) => ({
-            ...item,
-            valueUm: clampValue(item.valueUm + delta),
-          }));
-        }
         next[index] = { ...next[index], valueUm: clamped };
         return next;
       });
     },
-    [applyWeights, linking],
+    [applyWeights],
   );
 
   const handleAddDirection = useCallback(
@@ -192,14 +189,11 @@ export const DirectionalCompass = () => {
         }
         const insertIndex = next.findIndex((item) => angle < item.angleDeg);
         const label = nextLabel(next);
-        const baseValue = next.length
-          ? next.reduce((sum, item) => sum + item.valueUm, 0) / next.length
-          : 0;
         const newWeight: DirectionWeight = {
           id: createId('dir'),
           label,
           angleDeg: angle,
-          valueUm: linking ? baseValue : 0,
+          valueUm: 0,
         };
         createdId = newWeight.id;
         const targetIndex = insertIndex === -1 ? next.length : insertIndex;
@@ -210,7 +204,7 @@ export const DirectionalCompass = () => {
         setSelectedId(createdId);
       }
     },
-    [applyWeights, linking],
+    [applyWeights],
   );
 
   const handleRemove = useCallback(
@@ -361,10 +355,19 @@ export const DirectionalCompass = () => {
           <button
             type="button"
             className={`flex h-9 w-9 items-center justify-center rounded-full border transition ${
-              linking ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent'
+              proportionalAdjustmentsEnabled
+                ? 'border-accent bg-accent/10 text-accent'
+                : 'border-border text-muted hover:border-accent'
             }`}
-            onClick={() => setLinking(!linking)}
-            title={linking ? 'Linked adjustments enabled' : 'Linked adjustments disabled'}
+            onClick={() =>
+              setProportionalAdjustmentsEnabled(!proportionalAdjustmentsEnabled)
+            }
+            title={
+              proportionalAdjustmentsEnabled
+                ? 'Proportional adjustments enabled'
+                : 'Proportional adjustments disabled'
+            }
+            aria-label="Toggle proportional adjustments"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path

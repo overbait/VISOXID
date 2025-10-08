@@ -50,7 +50,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 ## 2024-06-01 — Compass spokes, progressive oxidation & baseline offsets
 
-- Directional weights surface as coloured spokes in the compass card (`DirectionalCompass`). Each spoke length & hue encode the μm value; clicking opens a nearby popover with ± nudges and a numeric input. The outer plus button toggles add mode—while active, click the rim to insert a new heading. Keep Delete support for the focused spoke and honour the `directionalLinking` flag when propagating edits.
+- Directional weights surface as coloured spokes in the compass card (`DirectionalCompass`). Each spoke length & hue encode the μm value; clicking opens a nearby popover with ± nudges and a numeric input. The outer plus button toggles add mode—while active, click the rim to insert a new heading. Keep Delete support for the focused spoke; manual adjustments always target the selected heading.
 - Heading data still travels through `DirectionWeight` objects (`id`, `label`, `angleDeg`, `valueUm`). `evalThickness` continues to blend headings with a cosine falloff and the global oxidation progress scalar—pass `progress` everywhere thickness is evaluated so the card, slider, and preview stay synchronised.
 - Oxidation preview scaling is controlled by `workspaceStore.setOxidationProgress`. The Canvas viewport renders a bottom slider—leave it functional and ensure future changes clamp values to [0, 1] before re-running `runGeometryPipeline`.
 - Inner oxide geometry now combines a Clipper-derived uniform inset with extra directional travel along each sample’s outward normal. Preserve this baseline-before-extras ordering when adjusting the pipeline and continue to sanitise the resulting polygons with `cleanAndSimplifyPolygons`.
@@ -272,3 +272,6 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-11-22 — Scene panel split & compass linking default
 - The Scene panel is now two cards: the upper card pairs segment mode toggles with the reference circle/oval controls, and the lower “Stored” card owns naming plus the scene/shape libraries. Keep delete/reset actions in the left rail’s quick-actions card rather than reintroducing them on the right.
 - `directionalLinking` defaults to `false` so the compass starts with per-spoke adjustments. When hydrating or resetting workspace state, continue using `false` unless the payload explicitly requests otherwise.
+
+## 2025-11-23 — Proportional compass scaling
+- The compass toggle now reads “Proportional adjustments” and, when enabled, changing the uniform thickness rescales every directional weight by `newUniform / oldUniform`. Keep this behaviour in `applyGlobalOxidation` and guard against division by zero by skipping the rescale when the prior uniform thickness is zero. Manual heading edits should not ripple to other directions regardless of the toggle state.
