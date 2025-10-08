@@ -1442,8 +1442,9 @@ const applyGlobalOxidation = (
   settings: Partial<OxidationSettings>,
 ): WorkspaceState => {
   const merged = mergeOxidationSettings(state.oxidationDefaults, settings);
+  const proportionalAdjustmentsEnabled = state.directionalLinking;
   const shouldScaleDirections =
-    state.directionalLinking && settings.thicknessUniformUm !== undefined;
+    proportionalAdjustmentsEnabled && settings.thicknessUniformUm !== undefined;
   let adjusted = merged;
   if (shouldScaleDirections) {
     const oldUniform = state.oxidationDefaults.thicknessUniformUm;
