@@ -364,7 +364,12 @@ export const DirectionalCompass = () => {
               linking ? 'border-accent bg-accent/10 text-accent' : 'border-border text-muted hover:border-accent'
             }`}
             onClick={() => setLinking(!linking)}
-            title={linking ? 'Linked adjustments enabled' : 'Linked adjustments disabled'}
+            title={
+              linking
+                ? 'Proportional adjustments enabled'
+                : 'Proportional adjustments disabled'
+            }
+            aria-label="Toggle proportional adjustments"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path

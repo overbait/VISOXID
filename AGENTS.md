@@ -272,3 +272,6 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-11-22 — Scene panel split & compass linking default
 - The Scene panel is now two cards: the upper card pairs segment mode toggles with the reference circle/oval controls, and the lower “Stored” card owns naming plus the scene/shape libraries. Keep delete/reset actions in the left rail’s quick-actions card rather than reintroducing them on the right.
 - `directionalLinking` defaults to `false` so the compass starts with per-spoke adjustments. When hydrating or resetting workspace state, continue using `false` unless the payload explicitly requests otherwise.
+
+## 2025-11-23 — Proportional compass scaling
+- The compass toggle now reads “Proportional adjustments” and, when enabled, changing the uniform thickness rescales every directional weight by `newUniform / oldUniform`. Keep this behaviour in `applyGlobalOxidation` and guard against division by zero by skipping the rescale when the prior uniform thickness is zero.

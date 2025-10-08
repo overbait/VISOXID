@@ -1442,12 +1442,33 @@ const applyGlobalOxidation = (
   settings: Partial<OxidationSettings>,
 ): WorkspaceState => {
   const merged = mergeOxidationSettings(state.oxidationDefaults, settings);
+  const shouldScaleDirections =
+    state.directionalLinking && settings.thicknessUniformUm !== undefined;
+  let adjusted = merged;
+  if (shouldScaleDirections) {
+    const oldUniform = state.oxidationDefaults.thicknessUniformUm;
+    const newUniform = merged.thicknessUniformUm;
+    if (oldUniform > 0) {
+      const ratio = newUniform / oldUniform;
+      if (Number.isFinite(ratio) && Math.abs(ratio - 1) > 1e-4) {
+        adjusted = {
+          ...merged,
+          thicknessByDirection: {
+            items: merged.thicknessByDirection.items.map((item) => ({
+              ...item,
+              valueUm: clampThickness(item.valueUm * ratio),
+            })),
+          },
+        };
+      }
+    }
+  }
   const now = Date.now();
   const nextPaths = state.paths.map((path) =>
     runGeometryPipeline(
       {
         ...path,
-        oxidation: cloneOxidationSettings(merged),
+        oxidation: cloneOxidationSettings(adjusted),
         meta: { ...path.meta, updatedAt: now },
       },
       state.oxidationProgress,
@@ -1455,7 +1476,7 @@ const applyGlobalOxidation = (
   );
   return {
     ...state,
-    oxidationDefaults: merged,
+    oxidationDefaults: adjusted,
     paths: nextPaths,
     dirty: true,
     future: [],
