@@ -2,6 +2,8 @@ export type ToolId = 'select' | 'line' | 'dot' | 'measure' | 'pan' | 'rotate' | 
 
 export type PathKind = 'oxided' | 'reference';
 
+export type OxidationDirection = 'inward' | 'outward';
+
 export interface Vec2 {
   x: number;
   y: number;
@@ -35,6 +37,7 @@ export interface PathMeta {
   locked: boolean;
   color: string;
   kind: PathKind;
+  oxidationDirection: OxidationDirection;
   createdAt: number;
   updatedAt: number;
 }
@@ -75,6 +78,7 @@ export interface StoredShape {
   nodes: PathNode[];
   oxidation: OxidationSettings;
   pathType: PathKind;
+  oxidationDirection?: OxidationDirection;
   createdAt: number;
   updatedAt: number;
 }

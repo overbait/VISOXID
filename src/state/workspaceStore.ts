@@ -18,6 +18,7 @@ import type {
   ToolId,
   PanelCollapseState,
   PathKind,
+  OxidationDirection,
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
@@ -39,16 +40,20 @@ import { alignLoop, clamp, distance, dot, sub } from '../utils/math';
 const LIBRARY_STORAGE_KEY = 'visoxid:shape-library';
 const SCENE_STORAGE_KEY = 'visoxid:scene-library';
 
-const MAX_THICKNESS_UM = 10;
 const ENDPOINT_MERGE_THRESHOLD = 4;
 const MIRROR_SNAP_THRESHOLD = 1.5;
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 const MAX_DOT_COUNT = 1000;
-const DEFAULT_DOT_COUNT = 240;
+const DEFAULT_DOT_COUNT = 130;
 const DEFAULT_MEASUREMENT_COLOR = '#1e3a8a';
 
-const clampThickness = (value: number): number => clamp(value, 0, MAX_THICKNESS_UM);
+const clampThickness = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, value);
+};
 const clampZoom = (value: number): number => clamp(value, MIN_ZOOM, MAX_ZOOM);
 
 const clampDotCount = (value: number | undefined): number => {
@@ -105,6 +110,7 @@ const loadLibrary = (): StoredShape[] => {
     return parsed.map((shape) => ({
       ...shape,
       pathType: (shape.pathType ?? 'oxided') as PathKind,
+      oxidationDirection: shape.oxidationDirection ?? 'inward',
       nodes: shape.nodes.map((node) => ({ ...node })),
       oxidation: cloneOxidationSettings(shape.oxidation),
     }));
@@ -120,6 +126,7 @@ const persistLibrary = (library: StoredShape[]): void => {
     const serialisable = library.map((shape) => ({
       ...shape,
       pathType: shape.pathType ?? 'oxided',
+      oxidationDirection: shape.oxidationDirection ?? 'inward',
       nodes: shape.nodes.map((node) => ({ ...node })),
       oxidation: cloneOxidationSettings(shape.oxidation),
     }));
@@ -341,6 +348,7 @@ const sanitizePathEntityForScene = (value: unknown): PathEntity | null => {
     locked: metaCandidate.locked !== undefined ? Boolean(metaCandidate.locked) : false,
     color: typeof metaCandidate.color === 'string' ? metaCandidate.color : '#2563eb',
     kind,
+    oxidationDirection: metaCandidate.oxidationDirection === 'outward' ? 'outward' : 'inward',
     createdAt: Number.isFinite(metaCandidate.createdAt) ? (metaCandidate.createdAt as number) : Date.now(),
     updatedAt: Number.isFinite(metaCandidate.updatedAt) ? (metaCandidate.updatedAt as number) : Date.now(),
   };
@@ -1223,7 +1231,7 @@ const createEmptyState = (library: StoredShape[] = [], scenes: StoredScene[] = [
   oxidationVisible: true,
   oxidationProgress: 1,
   oxidationDotCount: DEFAULT_DOT_COUNT,
-  directionalLinking: true,
+  directionalLinking: false,
   bootstrapped: false,
   library,
   scenes,
@@ -1248,6 +1256,7 @@ const clonePath = (path: PathEntity): PathEntity => ({
 const cloneStoredShape = (shape: StoredShape): StoredShape => ({
   ...shape,
   pathType: shape.pathType ?? 'oxided',
+  oxidationDirection: shape.oxidationDirection ?? 'inward',
   nodes: shape.nodes.map((node) => ({ ...node })),
   oxidation: cloneOxidationSettings(shape.oxidation),
 });
@@ -1331,6 +1340,7 @@ type WorkspaceActions = {
   duplicateSelectedPaths: () => void;
   setPathMeta: (id: string, patch: Partial<PathMeta>) => void;
   setPathType: (kind: PathKind) => void;
+  setOxidationDirection: (direction: OxidationDirection) => void;
   setHoverProbe: (probe: MeasurementProbe | null) => void;
   setPinnedProbe: (probe: MeasurementProbe | null) => void;
   setDragProbe: (probe: MeasurementProbe | null) => void;
@@ -1394,6 +1404,7 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
     progress,
   };
   const isReference = path.meta.kind === 'reference';
+  const direction = path.meta.oxidationDirection ?? 'inward';
   const withThickness = isReference
     ? normals.map((sample) => ({ ...sample, thickness: 0 }))
     : evalThickness(normals, thicknessOptions);
@@ -1402,7 +1413,14 @@ const runGeometryPipeline = (path: PathEntity, progress: number): PathEntity => 
   let polygons: Vec2[][] = [];
 
   if (!isReference) {
-    const derived = deriveInnerGeometry(withThickness, path.meta.closed, thicknessOptions);
+    const offsetSource =
+      direction === 'outward'
+        ? withThickness.map((sample) => ({
+            ...sample,
+            normal: { x: -sample.normal.x, y: -sample.normal.y },
+          }))
+        : withThickness;
+    const derived = deriveInnerGeometry(offsetSource, path.meta.closed, thicknessOptions);
     innerSamples = derived.innerSamples;
     polygons = derived.polygons;
   }
@@ -1467,27 +1485,32 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     const id = overrides?.meta?.id ?? createId('path');
     set((state) => {
       const history = [...state.history, captureSnapshot(state)].slice(-50);
-      const meta = overrides?.meta ?? {
+      const metaOverrides = overrides?.meta;
+      const now = Date.now();
+      const meta: PathMeta = {
         id,
-        name: `Path ${state.paths.length + 1}`,
-        closed: overrides?.meta?.closed ?? false,
-        visible: true,
-        locked: false,
-        color: overrides?.meta?.color ?? '#2563eb',
-        kind: overrides?.meta?.kind ?? 'oxided',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        name: metaOverrides?.name ?? `Path ${state.paths.length + 1}`,
+        closed: metaOverrides?.closed ?? false,
+        visible: metaOverrides?.visible ?? true,
+        locked: metaOverrides?.locked ?? false,
+        color: metaOverrides?.color ?? '#2563eb',
+        kind: (metaOverrides?.kind ?? 'oxided') as PathKind,
+        oxidationDirection: metaOverrides?.oxidationDirection ?? 'inward',
+        createdAt: metaOverrides?.createdAt ?? now,
+        updatedAt: metaOverrides?.updatedAt ?? now,
       };
-      if (!meta.kind) {
-        meta.kind = 'oxided';
-      }
       const clonedNodes = nodes.map((node) => ({ ...node }));
       const { nodes: mergedNodes, closed } = mergeEndpointsIfClose(
         clonedNodes,
         meta.closed,
       );
       const snapped = applyMirrorSnapping(mergedNodes, mirror);
-      const finalMeta = { ...meta, closed: meta.closed || closed, kind: meta.kind ?? 'oxided' };
+      const finalMeta: PathMeta = {
+        ...meta,
+        closed: meta.closed || closed,
+        kind: meta.kind ?? 'oxided',
+        oxidationDirection: meta.oxidationDirection ?? 'inward',
+      };
       const newPath: PathEntity = runGeometryPipeline(
         {
           meta: finalMeta,
@@ -1947,6 +1970,45 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         nodeSelection: null,
       };
     }),
+  setOxidationDirection: (direction) =>
+    set((state) => {
+      if (!state.selectedPathIds.length) {
+        return state;
+      }
+      const ids = new Set(state.selectedPathIds);
+      let changed = false;
+      const snapshot = captureSnapshot(state);
+      const now = Date.now();
+      const nextPaths = state.paths.map((path) => {
+        if (!ids.has(path.meta.id) || path.meta.kind === 'reference') {
+          return path;
+        }
+        const currentDirection = path.meta.oxidationDirection ?? 'inward';
+        if (currentDirection === direction) {
+          return path;
+        }
+        changed = true;
+        const meta = { ...path.meta, oxidationDirection: direction, updatedAt: now };
+        return runGeometryPipeline(
+          {
+            ...path,
+            meta,
+          },
+          state.oxidationProgress,
+        );
+      });
+      if (!changed) {
+        return state;
+      }
+      const history = [...state.history, snapshot].slice(-50);
+      return {
+        ...state,
+        paths: nextPaths,
+        history,
+        future: [],
+        dirty: true,
+      };
+    }),
   setHoverProbe: (probe) =>
     set((state) => ({
       measurements: { ...state.measurements, hoverProbe: probe },
@@ -1996,6 +2058,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         nodes: path.nodes.map((node) => ({ ...node })),
         oxidation: cloneOxidationSettings(path.oxidation),
         pathType: path.meta.kind ?? 'oxided',
+        oxidationDirection: path.meta.oxidationDirection ?? 'inward',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
@@ -2033,6 +2096,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         locked: false,
         color: '#2563eb',
         kind: cloned.pathType ?? 'oxided',
+        oxidationDirection: cloned.oxidationDirection ?? 'inward',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       },
@@ -2095,7 +2159,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
             ...path,
             nodes: path.nodes.map((node) => ({ ...node })),
             oxidation: cloneOxidationSettings(path.oxidation),
-            meta: { ...path.meta, kind: (path.meta.kind ?? 'oxided') as PathKind },
+            meta: {
+              ...path.meta,
+              kind: (path.meta.kind ?? 'oxided') as PathKind,
+              oxidationDirection: path.meta.oxidationDirection ?? 'inward',
+            },
             sampled: undefined,
           },
           sanitizedProgress,
@@ -2232,7 +2300,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
             ...path,
             nodes: path.nodes.map((node) => ({ ...node })),
             oxidation: cloneOxidationSettings(path.oxidation),
-            meta: { ...path.meta, kind: (path.meta.kind ?? 'oxided') as PathKind },
+            meta: {
+              ...path.meta,
+              kind: (path.meta.kind ?? 'oxided') as PathKind,
+              oxidationDirection: path.meta.oxidationDirection ?? 'inward',
+            },
             sampled: undefined,
           },
           sanitizedProgress,
@@ -2265,7 +2337,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         oxidationVisible: payload.oxidationVisible ?? true,
         oxidationProgress: sanitizedProgress,
         oxidationDotCount: clampDotCount(payload.oxidationDotCount ?? DEFAULT_DOT_COUNT),
-        directionalLinking: payload.directionalLinking ?? true,
+        directionalLinking: payload.directionalLinking ?? false,
         bootstrapped: payload.bootstrapped ?? true,
         library: state.library.map(cloneStoredShape),
         scenes: state.scenes.map(cloneStoredScene),

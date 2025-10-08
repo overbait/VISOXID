@@ -33,7 +33,7 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Segment toggling (line ↔︎ Bézier) is handled in the store via `toggleSegmentCurve`.  Any future editing affordances should reuse that action to keep mirrored/closed path invariants intact.
 - Path endpoints auto-close when they approach within ~4 μm and mirror snapping pins points to the configured axes—avoid bypassing `mergeEndpointsIfClose` or `applyMirrorSnapping` when mutating node arrays.
 - Inner oxidation silhouettes are now cleaned with Clipper before resampling; if you extend the offset logic, feed new contours back through `cleanAndSimplifyPolygons` so ribbons never self-intersect.
-- UI and models now clamp oxide inputs to ≤ 10 μm.  Preserve `MAX_THICKNESS_UM` when introducing new entry points or validation.
+- UI and models now clamp oxide inputs to ≤ 10 μm.  Preserve `MAX_THICKNESS_UM` when introducing new entry points or validation. *(Superseded by the 2025-11-20 update removing this ceiling.)*
 
 ## 2024-05-29 — 50 μm viewport, mirrored previews & smarter pen
 
@@ -252,3 +252,23 @@ Think of this file as the living design history.  Out-of-date instructions cause
 - Canvas resizing now rounds the backing-store dimensions **upwards** (`Math.ceil`) when applying device-pixel ratio scaling. This prevents sub-pixel gutters from accumulating stale frame data along the lower-right edge. Keep using ceiling rounding if you touch `CanvasRenderer.resize()` so the render loop always clears the full visible surface.
 - `CanvasRenderer` stores the CSS pixel width/height captured from the `ResizeObserver` and clears the backing store with the identity transform before reapplying DPR scaling each frame. Preserve this two-step clear so fractional CSS sizes map cleanly to device pixels without leaving a ghosted band along the bottom-right edge.
 
+## 2025-11-19 — Bidirectional oxidation toggle & measurement label shift
+
+- `PathMeta` now carries an `oxidationDirection` (`'inward' | 'outward'`) and defaults to `'inward'`. The Path Type panel exposes a toggle whenever the active selection is oxided—call `setOxidationDirection` so undo history and geometry recomputation stay in sync.
+- Outward oxidation flips the sampled normals before entering `deriveInnerGeometry` and inverts the dot clip mask using an even-odd pass across the whole canvas. When adding new renders, honour the `oxidationDirection` so exterior previews stay masked correctly.
+- Measurement callouts anchor near the probe’s start point with a short along-track offset. If you add new measurement overlays keep the offset away from the handle origin so the glyph doesn’t hide the anchor.
+
+## 2025-11-20 — Compass scaling & oxidation defaults
+
+- The Path Type panel’s inside/outside switch now sits directly under the Oxided button with the compact “inside - outside” label. Keep this placement when adjusting the layout so the toggle stays adjacent to the path mode control.
+- Directional thickness inputs no longer clamp at 10 μm; treat every non-negative value as valid and avoid reintroducing hard maximums in the store or compass editor. The preview spokes should continue to grow proportionally beyond the original compass boundary.
+- Oxidation preview dots now default to 130 and the Oxidation panel no longer exposes the mirror symmetry checkbox. Leave the new default in place when seeding state or resetting the workspace.
+
+## 2025-11-21 — Compass evaluation ceiling removal
+
+- `evalThickness`/`evalThicknessForAngle` now respect the unlimited directional values. Don’t restore the old 10 μm clamp inside `src/geometry/thickness.ts`; the compass preview and geometry pipeline rely on the full range.
+
+
+## 2025-11-22 — Scene panel split & compass linking default
+- The Scene panel is now two cards: the upper card pairs segment mode toggles with the reference circle/oval controls, and the lower “Stored” card owns naming plus the scene/shape libraries. Keep delete/reset actions in the left rail’s quick-actions card rather than reintroducing them on the right.
+- `directionalLinking` defaults to `false` so the compass starts with per-spoke adjustments. When hydrating or resetting workspace state, continue using `false` unless the payload explicitly requests otherwise.

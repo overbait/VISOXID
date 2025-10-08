@@ -131,6 +131,7 @@ export const ImportExportPanel = () => {
             locked: false,
             color: '#2563eb',
             kind: shape.kind,
+            oxidationDirection: 'inward',
             createdAt: Date.now(),
             updatedAt: Date.now(),
           },
