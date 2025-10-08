@@ -279,3 +279,6 @@ Think of this file as the living design history.  Out-of-date instructions cause
 ## 2025-11-24 — Oxidation dot colour linking
 - Oxidation dots on the canvas now reuse the compass colour gradient, with each dot sampling the directional component at its outward normal. When adjusting dot rendering, continue to route colour selection through `directionalValueToColor` so compass and canvas stay aligned.
 - `collectDotCenters` now returns interpolated normals alongside positions to support the colour mapping. Preserve this structure (position + angle) when reworking distribution so dot hues keep following the local heading.
+
+## 2025-11-25 — Directional tint gating
+- Oxidation dots paint their uniform baseline with the path’s oxide colour and only tint the excess shell created by directional adjustments. Keep the two-pass fill (directional ring first, then baseline fill without a stroke) so untouched headings stay neutral while edited spokes retain their compass hue.

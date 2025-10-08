@@ -102,22 +102,35 @@ const TAU = Math.PI * 2;
 const DOT_POLYGON_MIN_SEGMENTS = 96;
 const LENGTH_EPS = 1e-6;
 
-const computeDotPolygon = (options: {
-  uniformThickness: number;
-  weights: DirectionWeight[];
-  mirrorSymmetry: boolean;
-  progress: number;
-}): Vec2[] => {
-  const segments = Math.max(DOT_POLYGON_MIN_SEGMENTS, options.weights.length * 16);
-  const polygon: Vec2[] = [];
+interface DotPolygonVertex {
+  angle: number;
+  offset: Vec2;
+  radius: number;
+}
+
+const computeDotPolygon = (
+  options: {
+    uniformThickness: number;
+    weights: DirectionWeight[];
+    mirrorSymmetry: boolean;
+    progress: number;
+  },
+  segmentCount?: number,
+): DotPolygonVertex[] => {
+  const segments = segmentCount ?? Math.max(DOT_POLYGON_MIN_SEGMENTS, options.weights.length * 16);
+  const polygon: DotPolygonVertex[] = [];
   let maxRadius = 0;
   for (let i = 0; i < segments; i += 1) {
     const theta = (i / segments) * TAU;
     const radius = Math.max(evalThicknessForAngle(theta, options), 0);
     maxRadius = Math.max(maxRadius, radius);
     polygon.push({
-      x: Math.cos(theta) * radius,
-      y: Math.sin(theta) * radius,
+      angle: theta,
+      radius,
+      offset: {
+        x: Math.cos(theta) * radius,
+        y: Math.sin(theta) * radius,
+      },
     });
   }
   if (maxRadius <= LENGTH_EPS) {
@@ -262,13 +275,43 @@ export const drawOxidationDots = (
     progress: 1,
   } as const;
 
-  const dotPolygon = computeDotPolygon(thicknessOptions);
-  if (dotPolygon.length < 3) return;
+  const dotPolygonVertices = computeDotPolygon(thicknessOptions);
+  if (dotPolygonVertices.length < 3) return;
+  const dotPolygon = dotPolygonVertices.map((vertex) => vertex.offset);
+
+  const baselinePolygonVertices =
+    thicknessOptions.uniformThickness > LENGTH_EPS
+      ? computeDotPolygon(
+          {
+            uniformThickness: path.oxidation.thicknessUniformUm,
+            weights: [],
+            mirrorSymmetry: thicknessOptions.mirrorSymmetry,
+            progress,
+          },
+          dotPolygonVertices.length,
+        )
+      : [];
+  const baselinePolygon = baselinePolygonVertices.map((vertex) => vertex.offset);
 
   const transforms = createMirrorTransforms(mirror);
   const direction = path.meta.oxidationDirection ?? 'inward';
 
-  const drawWorldPolygon = (points: Vec2[], color: string, clipScreen?: Vec2[]) => {
+  const defaultFillAlpha = selected ? 0.55 : 0.4;
+  const defaultStrokeAlpha = selected ? 0.9 : 0.7;
+  const defaultStrokeWidth = 0.6;
+
+  const drawWorldPolygon = (
+    points: Vec2[],
+    options: {
+      color: string;
+      clipScreen?: Vec2[];
+      fillAlpha?: number;
+      strokeAlpha?: number;
+      strokeWidth?: number;
+    },
+  ) => {
+    const { color, clipScreen, fillAlpha = defaultFillAlpha, strokeAlpha = defaultStrokeAlpha, strokeWidth = defaultStrokeWidth } =
+      options;
     const screenPoints = points.map((point) => worldToCanvas(point, view));
     if (screenPoints.length < 3) return;
     ctx.save();
@@ -296,13 +339,17 @@ export const drawOxidationDots = (
       ctx.lineTo(screenPoints[i].x, screenPoints[i].y);
     }
     ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = selected ? 0.55 : 0.4;
-    ctx.fill();
-    ctx.globalAlpha = selected ? 0.9 : 0.7;
-    ctx.lineWidth = 0.6;
-    ctx.stroke();
+    if (fillAlpha > 0) {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = fillAlpha;
+      ctx.fill();
+    }
+    if (strokeAlpha > 0 && strokeWidth > 0) {
+      ctx.globalAlpha = strokeAlpha;
+      ctx.lineWidth = strokeWidth;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    }
     ctx.restore();
   };
 
@@ -335,13 +382,31 @@ export const drawOxidationDots = (
 
   centers.forEach((center) => {
     const basePolygon = translatePolygon(dotPolygon, center.position);
+    const baselinePolygonWorld = baselinePolygon.length
+      ? translatePolygon(baselinePolygon, center.position)
+      : undefined;
     const directionalThickness = thicknessOptions.weights.length
       ? evalThicknessForAngle(center.angle, directionalColorOptions)
       : 0;
-    const color = directionalValueToColor(directionalThickness);
+    const hasDirectionalContribution = directionalThickness > LENGTH_EPS;
+    const tintColor = hasDirectionalContribution ? directionalValueToColor(directionalThickness) : path.meta.color;
     variants.forEach((variant) => {
       const polygon = variant.apply(basePolygon);
-      drawWorldPolygon(polygon, color, variant.clipScreen);
+      if (hasDirectionalContribution) {
+        drawWorldPolygon(polygon, { color: tintColor, clipScreen: variant.clipScreen });
+        if (baselinePolygonWorld) {
+          const baselineVariant = variant.apply(baselinePolygonWorld);
+          drawWorldPolygon(baselineVariant, {
+            color: path.meta.color,
+            clipScreen: variant.clipScreen,
+            fillAlpha: defaultFillAlpha,
+            strokeAlpha: 0,
+            strokeWidth: 0,
+          });
+        }
+      } else {
+        drawWorldPolygon(polygon, { color: path.meta.color, clipScreen: variant.clipScreen });
+      }
     });
   });
 };
