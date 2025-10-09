@@ -9,6 +9,7 @@ import { evalThicknessForAngle } from '../geometry';
 import type { DirectionWeight } from '../types';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
+import { directionalValueToColor } from '../utils/directionalColor';
 
 const CANVAS_SIZE = 260;
 const OUTER_RADIUS = CANVAS_SIZE / 2 - 18;
@@ -48,34 +49,6 @@ const polarToCartesian = (angleRad: number, radius: number): { x: number; y: num
   x: CANVAS_SIZE / 2 + Math.cos(angleRad) * radius,
   y: CANVAS_SIZE / 2 + Math.sin(angleRad) * radius,
 });
-
-const interpolate = (start: number[], end: number[], t: number): number[] => [
-  start[0] + (end[0] - start[0]) * t,
-  start[1] + (end[1] - start[1]) * t,
-  start[2] + (end[2] - start[2]) * t,
-];
-
-const gradientStops: { stop: number; color: number[] }[] = [
-  { stop: 0, color: [37, 99, 235] },
-  { stop: 0.35, color: [34, 197, 94] },
-  { stop: 0.7, color: [250, 204, 21] },
-  { stop: 1, color: [239, 68, 68] },
-];
-
-const valueToColor = (value: number): string => {
-  const t = Math.min(Math.max(value / 10, 0), 1);
-  for (let i = 0; i < gradientStops.length - 1; i += 1) {
-    const current = gradientStops[i];
-    const next = gradientStops[i + 1];
-    if (t >= current.stop && t <= next.stop) {
-      const span = (t - current.stop) / (next.stop - current.stop || 1);
-      const [r, g, b] = interpolate(current.color, next.color, span);
-      return `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
-    }
-  }
-  const last = gradientStops.at(-1)!;
-  return `rgb(${last.color.map((c) => Math.round(c)).join(', ')})`;
-};
 
 const spokeRadiusForValue = (value: number): number => {
   const ratio = Math.max(value / 10, 0);
@@ -493,7 +466,7 @@ export const DirectionalCompass = () => {
               const radius = spokeRadiusForValue(weight.valueUm);
               const start = polarToCartesian(angleRad, CENTER_DOT_RADIUS);
               const end = polarToCartesian(angleRad, radius);
-              const color = valueToColor(weight.valueUm);
+              const color = directionalValueToColor(weight.valueUm);
               const isSelected = selectedId === weight.id;
               return (
                 <g key={weight.id} className="pointer-events-auto">

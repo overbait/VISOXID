@@ -1,6 +1,7 @@
 import type { DirectionWeight, MirrorSettings, PathEntity, SamplePoint, Vec2 } from '../types';
 import { evalThicknessForAngle } from '../geometry';
-import { distance } from '../utils/math';
+import { directionalValueToColor } from '../utils/directionalColor';
+import { distance, lerp, normalize } from '../utils/math';
 import { worldToCanvas, type ViewTransform } from './viewTransform';
 
 const moveToPoint = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
@@ -101,22 +102,35 @@ const TAU = Math.PI * 2;
 const DOT_POLYGON_MIN_SEGMENTS = 96;
 const LENGTH_EPS = 1e-6;
 
-const computeDotPolygon = (options: {
-  uniformThickness: number;
-  weights: DirectionWeight[];
-  mirrorSymmetry: boolean;
-  progress: number;
-}): Vec2[] => {
-  const segments = Math.max(DOT_POLYGON_MIN_SEGMENTS, options.weights.length * 16);
-  const polygon: Vec2[] = [];
+interface DotPolygonVertex {
+  angle: number;
+  offset: Vec2;
+  radius: number;
+}
+
+const computeDotPolygon = (
+  options: {
+    uniformThickness: number;
+    weights: DirectionWeight[];
+    mirrorSymmetry: boolean;
+    progress: number;
+  },
+  segmentCount?: number,
+): DotPolygonVertex[] => {
+  const segments = segmentCount ?? Math.max(DOT_POLYGON_MIN_SEGMENTS, options.weights.length * 16);
+  const polygon: DotPolygonVertex[] = [];
   let maxRadius = 0;
   for (let i = 0; i < segments; i += 1) {
     const theta = (i / segments) * TAU;
     const radius = Math.max(evalThicknessForAngle(theta, options), 0);
     maxRadius = Math.max(maxRadius, radius);
     polygon.push({
-      x: Math.cos(theta) * radius,
-      y: Math.sin(theta) * radius,
+      angle: theta,
+      radius,
+      offset: {
+        x: Math.cos(theta) * radius,
+        y: Math.sin(theta) * radius,
+      },
     });
   }
   if (maxRadius <= LENGTH_EPS) {
@@ -125,14 +139,25 @@ const computeDotPolygon = (options: {
   return polygon;
 };
 
+interface DotCenter {
+  position: Vec2;
+  angle: number;
+}
+
 const collectDotCenters = (
   samples: SamplePoint[],
   closed: boolean,
   requestedCount: number,
-): Vec2[] => {
+): DotCenter[] => {
   if (!samples.length) return [];
   if (samples.length === 1) {
-    return [samples[0].position];
+    const normal = normalize(samples[0].normal);
+    return [
+      {
+        position: samples[0].position,
+        angle: Math.atan2(normal.y, normal.x),
+      },
+    ];
   }
 
   const count = Math.max(0, Math.floor(requestedCount));
@@ -140,20 +165,23 @@ const collectDotCenters = (
     return [];
   }
 
-  const positions = samples.map((sample) => sample.position);
-  const segments: Array<{ start: Vec2; end: Vec2; length: number }> = [];
-  for (let i = 1; i < positions.length; i += 1) {
-    const start = positions[i - 1];
-    const end = positions[i];
-    const length = distance(start, end);
+  const segments: Array<{
+    start: SamplePoint;
+    end: SamplePoint;
+    length: number;
+  }> = [];
+  for (let i = 1; i < samples.length; i += 1) {
+    const start = samples[i - 1];
+    const end = samples[i];
+    const length = distance(start.position, end.position);
     if (length > LENGTH_EPS) {
       segments.push({ start, end, length });
     }
   }
-  if (closed && positions.length > 1) {
-    const start = positions[positions.length - 1];
-    const end = positions[0];
-    const length = distance(start, end);
+  if (closed && samples.length > 1) {
+    const start = samples[samples.length - 1];
+    const end = samples[0];
+    const length = distance(start.position, end.position);
     if (length > LENGTH_EPS) {
       segments.push({ start, end, length });
     }
@@ -161,7 +189,13 @@ const collectDotCenters = (
 
   const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0);
   if (totalLength <= LENGTH_EPS) {
-    return [positions[0]];
+    const normal = normalize(samples[0].normal);
+    return [
+      {
+        position: samples[0].position,
+        angle: Math.atan2(normal.y, normal.x),
+      },
+    ];
   }
 
   const targets: number[] = [];
@@ -179,7 +213,7 @@ const collectDotCenters = (
     }
   }
 
-  const centers: Vec2[] = [];
+  const centers: DotCenter[] = [];
   targets.forEach((target) => {
     let remaining = target;
     for (let i = 0; i < segments.length; i += 1) {
@@ -187,9 +221,16 @@ const collectDotCenters = (
       if (remaining <= segment.length || i === segments.length - 1) {
         const length = segment.length <= LENGTH_EPS ? 0 : segment.length;
         const t = length <= LENGTH_EPS ? 0 : Math.min(Math.max(remaining / length, 0), 1);
+        const position = {
+          x: segment.start.position.x + (segment.end.position.x - segment.start.position.x) * t,
+          y: segment.start.position.y + (segment.end.position.y - segment.start.position.y) * t,
+        };
+        const interpolatedNormal = normalize(
+          lerp(segment.start.normal, segment.end.normal, t),
+        );
         centers.push({
-          x: segment.start.x + (segment.end.x - segment.start.x) * t,
-          y: segment.start.y + (segment.end.y - segment.start.y) * t,
+          position,
+          angle: Math.atan2(interpolatedNormal.y, interpolatedNormal.x),
         });
         break;
       }
@@ -227,13 +268,50 @@ export const drawOxidationDots = (
     progress,
   };
 
-  const dotPolygon = computeDotPolygon(thicknessOptions);
-  if (dotPolygon.length < 3) return;
+  const directionalColorOptions = {
+    uniformThickness: 0,
+    weights: thicknessOptions.weights,
+    mirrorSymmetry: thicknessOptions.mirrorSymmetry,
+    progress: 1,
+  } as const;
+
+  const dotPolygonVertices = computeDotPolygon(thicknessOptions);
+  if (dotPolygonVertices.length < 3) return;
+  const dotPolygon = dotPolygonVertices.map((vertex) => vertex.offset);
+
+  const baselinePolygonVertices =
+    thicknessOptions.uniformThickness > LENGTH_EPS
+      ? computeDotPolygon(
+          {
+            uniformThickness: path.oxidation.thicknessUniformUm,
+            weights: [],
+            mirrorSymmetry: thicknessOptions.mirrorSymmetry,
+            progress,
+          },
+          dotPolygonVertices.length,
+        )
+      : [];
+  const baselinePolygon = baselinePolygonVertices.map((vertex) => vertex.offset);
 
   const transforms = createMirrorTransforms(mirror);
   const direction = path.meta.oxidationDirection ?? 'inward';
 
-  const drawWorldPolygon = (points: Vec2[], clipScreen?: Vec2[]) => {
+  const defaultFillAlpha = selected ? 0.55 : 0.4;
+  const defaultStrokeAlpha = selected ? 0.9 : 0.7;
+  const defaultStrokeWidth = 0.6;
+
+  const drawWorldPolygon = (
+    points: Vec2[],
+    options: {
+      color: string;
+      clipScreen?: Vec2[];
+      fillAlpha?: number;
+      strokeAlpha?: number;
+      strokeWidth?: number;
+    },
+  ) => {
+    const { color, clipScreen, fillAlpha = defaultFillAlpha, strokeAlpha = defaultStrokeAlpha, strokeWidth = defaultStrokeWidth } =
+      options;
     const screenPoints = points.map((point) => worldToCanvas(point, view));
     if (screenPoints.length < 3) return;
     ctx.save();
@@ -261,13 +339,17 @@ export const drawOxidationDots = (
       ctx.lineTo(screenPoints[i].x, screenPoints[i].y);
     }
     ctx.closePath();
-    ctx.fillStyle = path.meta.color;
-    ctx.strokeStyle = path.meta.color;
-    ctx.globalAlpha = selected ? 0.55 : 0.4;
-    ctx.fill();
-    ctx.globalAlpha = selected ? 0.9 : 0.7;
-    ctx.lineWidth = 0.6;
-    ctx.stroke();
+    if (fillAlpha > 0) {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = fillAlpha;
+      ctx.fill();
+    }
+    if (strokeAlpha > 0 && strokeWidth > 0) {
+      ctx.globalAlpha = strokeAlpha;
+      ctx.lineWidth = strokeWidth;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+    }
     ctx.restore();
   };
 
@@ -299,10 +381,32 @@ export const drawOxidationDots = (
   ];
 
   centers.forEach((center) => {
-    const basePolygon = translatePolygon(dotPolygon, center);
+    const basePolygon = translatePolygon(dotPolygon, center.position);
+    const baselinePolygonWorld = baselinePolygon.length
+      ? translatePolygon(baselinePolygon, center.position)
+      : undefined;
+    const directionalThickness = thicknessOptions.weights.length
+      ? evalThicknessForAngle(center.angle, directionalColorOptions)
+      : 0;
+    const hasDirectionalContribution = directionalThickness > LENGTH_EPS;
+    const tintColor = hasDirectionalContribution ? directionalValueToColor(directionalThickness) : path.meta.color;
     variants.forEach((variant) => {
       const polygon = variant.apply(basePolygon);
-      drawWorldPolygon(polygon, variant.clipScreen);
+      if (hasDirectionalContribution) {
+        drawWorldPolygon(polygon, { color: tintColor, clipScreen: variant.clipScreen });
+        if (baselinePolygonWorld) {
+          const baselineVariant = variant.apply(baselinePolygonWorld);
+          drawWorldPolygon(baselineVariant, {
+            color: path.meta.color,
+            clipScreen: variant.clipScreen,
+            fillAlpha: defaultFillAlpha,
+            strokeAlpha: 0,
+            strokeWidth: 0,
+          });
+        }
+      } else {
+        drawWorldPolygon(polygon, { color: path.meta.color, clipScreen: variant.clipScreen });
+      }
     });
   });
 };
