@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
 import { clsx } from 'clsx';
 import { createRenderer } from '../canvas/renderer';
 import { useWorkspaceStore } from '../state';
@@ -9,9 +9,11 @@ import {
   canvasDistanceToWorld,
   canvasToWorld,
   computeViewTransform,
+  worldToCanvas,
   type ViewTransform,
 } from '../canvas/viewTransform';
 import { evalThicknessForAngle } from '../geometry';
+import { formatDimension, summarizePathGeometry } from '../utils/shapeMetrics';
 
 type DragTarget =
   | { kind: 'anchor'; pathId: string; nodeId: string }
@@ -30,6 +32,148 @@ const pointSegmentDistance = (p: Vec2, a: Vec2, b: Vec2): number => {
   const t = abLenSq === 0 ? 0 : Math.max(0, Math.min(1, (ap.x * ab.x + ap.y * ab.y) / abLenSq));
   const closest = { x: a.x + ab.x * t, y: a.y + ab.y * t };
   return distance(p, closest);
+};
+
+interface ExportInfoOverlaysProps {
+  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  view: ViewTransform;
+}
+
+const ExportInfoOverlays = ({ canvasRef, view }: ExportInfoOverlaysProps) => {
+  const panels = useWorkspaceStore((state) => state.exportView.infoPanels);
+  const paths = useWorkspaceStore((state) => state.paths);
+  const setPanelPosition = useWorkspaceStore((state) => state.setExportInfoPanelPosition);
+  const dragSession = useRef<{ pathId: string; pointerId: number; offset: Vec2 } | null>(null);
+
+  const entries = useMemo(() => {
+    if (!panels.length || !paths.length) {
+      return [] as Array<{
+        panel: typeof panels[number];
+        path: PathEntity;
+        summary: NonNullable<ReturnType<typeof summarizePathGeometry>>;
+        anchor: Vec2;
+      }>;
+    }
+    const byId = new Map(paths.map((path) => [path.meta.id, path]));
+    const result: Array<{
+      panel: typeof panels[number];
+      path: PathEntity;
+      summary: NonNullable<ReturnType<typeof summarizePathGeometry>>;
+      anchor: Vec2;
+    }> = [];
+    for (const panel of panels) {
+      if (!panel.visible) {
+        continue;
+      }
+      const path = byId.get(panel.pathId);
+      if (!path || !path.meta.visible) {
+        continue;
+      }
+      const summary = summarizePathGeometry(path);
+      if (!summary) {
+        continue;
+      }
+      const anchor = worldToCanvas(panel.position, view);
+      result.push({ panel, path, summary, anchor });
+    }
+    return result;
+  }, [panels, paths, view]);
+
+  const handlePointerDown = (pathId: string, position: Vec2) => (event: PointerEvent<HTMLDivElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const pointerCanvas = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    const pointerWorld = canvasToWorld(pointerCanvas, view);
+    dragSession.current = {
+      pathId,
+      pointerId: event.pointerId,
+      offset: { x: position.x - pointerWorld.x, y: position.y - pointerWorld.y },
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const session = dragSession.current;
+    const canvas = canvasRef.current;
+    if (!session || session.pointerId !== event.pointerId || !canvas) {
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const pointerCanvas = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    const pointerWorld = canvasToWorld(pointerCanvas, view);
+    const nextPosition = {
+      x: pointerWorld.x + session.offset.x,
+      y: pointerWorld.y + session.offset.y,
+    };
+    setPanelPosition(session.pathId, nextPosition);
+  };
+
+  const handlePointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    const session = dragSession.current;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+    dragSession.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  if (!entries.length) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      {entries.map(({ panel, path, summary, anchor }) => {
+        const details: string[] = [];
+        if (summary.kind === 'circle') {
+          details.push(`Diameter: ${formatDimension(summary.diameter)} μm`);
+        } else if (summary.kind === 'oval') {
+          details.push(`Horizontal: ${formatDimension(summary.horizontal)} μm`);
+          details.push(`Vertical: ${formatDimension(summary.vertical)} μm`);
+        } else {
+          details.push(`Longest span: ${formatDimension(summary.longest)} μm`);
+          details.push(`Shortest span: ${formatDimension(summary.shortest)} μm`);
+        }
+        return (
+          <div
+            key={panel.pathId}
+            className="pointer-events-auto absolute max-w-[240px] -translate-x-1/2 -translate-y-full -mt-3 rounded-2xl border border-border bg-white/95 px-3 py-2 text-xs shadow"
+            style={{ left: `${anchor.x}px`, top: `${anchor.y}px` }}
+            onPointerDown={handlePointerDown(panel.pathId, panel.position)}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerEnd}
+            onPointerCancel={handlePointerEnd}
+          >
+            <div className="flex flex-col gap-1 text-left">
+              <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-muted">
+                {path.meta.name}
+              </div>
+              {details.map((line) => (
+                <div key={line} className="text-[11px] text-text">
+                  {line}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 };
 
 interface SelectionBoxRect {
@@ -99,6 +243,7 @@ export const CanvasViewport = ({ variant = 'default' }: CanvasViewportProps) => 
   } | null>(null);
   const [cursorHint, setCursorHint] = useState<string | null>(null);
   const [selectionBoxRect, setSelectionBoxRect] = useState<SelectionBoxRect | null>(null);
+  const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
   const isExportVariant = variant === 'export';
   const canvasWidthClass = isExportVariant
@@ -114,6 +259,36 @@ export const CanvasViewport = ({ variant = 'default' }: CanvasViewportProps) => 
     renderer.start();
     return () => renderer.stop();
   }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    const updateSize = () => {
+      const rect = canvas.getBoundingClientRect();
+      setCanvasSize({ width: rect.width, height: rect.height });
+    };
+    updateSize();
+    const owner = canvas.ownerDocument?.defaultView as (Window & typeof globalThis & {
+      ResizeObserver?: typeof ResizeObserver;
+    }) | null;
+    if (owner?.ResizeObserver) {
+      const observer = new owner.ResizeObserver(() => updateSize());
+      observer.observe(canvas);
+      return () => observer.disconnect();
+    }
+    if (owner?.addEventListener) {
+      owner.addEventListener('resize', updateSize);
+      return () => owner.removeEventListener?.('resize', updateSize);
+    }
+    return undefined;
+  }, []);
+
+  const view = useMemo(
+    () => computeViewTransform(canvasSize.width || 1, canvasSize.height || 1, zoom, pan),
+    [canvasSize.height, canvasSize.width, pan, zoom],
+  );
 
   const getPointerContext = (event: PointerEvent<HTMLCanvasElement>): {
     world: Vec2;
@@ -918,6 +1093,9 @@ export const CanvasViewport = ({ variant = 'default' }: CanvasViewportProps) => 
         onPointerLeave={handlePointerUp}
         onWheel={handleWheel}
       />
+      {isExportVariant && canvasSize.width > 0 && canvasSize.height > 0 && (
+        <ExportInfoOverlays canvasRef={canvasRef} view={view} />
+      )}
       {selectionBoxRect && (
         <div
           className="pointer-events-none absolute rounded-md border border-accent/60 bg-accent/10"

@@ -90,11 +90,18 @@ export interface ExportMeasurement {
   probe: MeasurementProbe;
 }
 
+export interface ExportInfoPanel {
+  pathId: string;
+  position: Vec2;
+  visible: boolean;
+}
+
 export interface ExportViewState {
   active: boolean;
   previousTool: ToolId | null;
   measurements: ExportMeasurement[];
   sequence: number;
+  infoPanels: ExportInfoPanel[];
 }
 
 export interface StoredSceneState {

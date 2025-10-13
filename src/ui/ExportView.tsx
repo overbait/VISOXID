@@ -1,8 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CanvasViewport } from './CanvasViewport';
 import { useWorkspaceStore } from '../state';
 import type { DirectionWeight } from '../types';
 import { evalThicknessForAngle } from '../geometry';
+import { formatDimension, summarizePathGeometry } from '../utils/shapeMetrics';
+import { clamp } from '../utils/math';
+import { VIEW_EXTENT_UM } from '../canvas/viewTransform';
 
 const CANVAS_SIZE = 260;
 const OUTER_RADIUS = CANVAS_SIZE / 2 - 20;
@@ -52,6 +55,122 @@ const polarToCartesian = (angleRad: number, radius: number): { x: number; y: num
   x: CENTER + Math.cos(angleRad) * radius,
   y: CENTER + Math.sin(angleRad) * radius,
 });
+
+const useExportInfoPanelsBootstrap = () => {
+  const paths = useWorkspaceStore((state) => state.paths);
+  const panels = useWorkspaceStore((state) => state.exportView.infoPanels);
+  const ensurePanels = useWorkspaceStore((state) => state.ensureExportInfoPanels);
+  const prunePanels = useWorkspaceStore((state) => state.pruneExportInfoPanels);
+
+  useEffect(() => {
+    const visiblePaths = paths.filter((path) => path.meta.visible);
+    const validIds = visiblePaths.map((path) => path.meta.id);
+    prunePanels(validIds);
+    const existing = new Set(panels.map((panel) => panel.pathId));
+    const additions: Array<{ pathId: string; position: { x: number; y: number } }> = [];
+    for (const path of visiblePaths) {
+      if (existing.has(path.meta.id)) {
+        continue;
+      }
+      const summary = summarizePathGeometry(path);
+      if (!summary) {
+        continue;
+      }
+      const { bounds } = summary;
+      const centerX = (bounds.minX + bounds.maxX) / 2;
+      const verticalOffset = clamp(bounds.height * 0.2, 0.75, 3);
+      const anchor = {
+        x: clamp(centerX, 0, VIEW_EXTENT_UM),
+        y: clamp(bounds.minY - verticalOffset, 0.5, VIEW_EXTENT_UM),
+      };
+      additions.push({ pathId: path.meta.id, position: anchor });
+    }
+    if (additions.length) {
+      ensurePanels(additions);
+    }
+  }, [ensurePanels, panels, paths, prunePanels]);
+};
+
+const ShapeInfoTogglePanel = () => {
+  const paths = useWorkspaceStore((state) => state.paths);
+  const panels = useWorkspaceStore((state) => state.exportView.infoPanels);
+  const setVisibility = useWorkspaceStore((state) => state.setExportInfoPanelVisibility);
+
+  const entries = useMemo(() => {
+    if (!paths.length || !panels.length) {
+      return [] as Array<{
+        path: typeof paths[number];
+        panel: typeof panels[number];
+        summary: NonNullable<ReturnType<typeof summarizePathGeometry>>;
+      }>;
+    }
+    const byId = new Map(panels.map((panel) => [panel.pathId, panel]));
+    const result: Array<{
+      path: typeof paths[number];
+      panel: typeof panels[number];
+      summary: NonNullable<ReturnType<typeof summarizePathGeometry>>;
+    }> = [];
+    for (const path of paths) {
+      if (!path.meta.visible) {
+        continue;
+      }
+      const panel = byId.get(path.meta.id);
+      if (!panel) {
+        continue;
+      }
+      const summary = summarizePathGeometry(path);
+      if (!summary) {
+        continue;
+      }
+      result.push({ path, panel, summary });
+    }
+    return result;
+  }, [panels, paths]);
+
+  if (!entries.length) {
+    return null;
+  }
+
+  const describe = (summary: NonNullable<ReturnType<typeof summarizePathGeometry>>): string => {
+    if (summary.kind === 'circle') {
+      return `Diameter ${formatDimension(summary.diameter)} μm`;
+    }
+    if (summary.kind === 'oval') {
+      return `Horizontal ${formatDimension(summary.horizontal)} μm • Vertical ${formatDimension(summary.vertical)} μm`;
+    }
+    return `Longest ${formatDimension(summary.longest)} μm • Shortest ${formatDimension(summary.shortest)} μm`;
+  };
+
+  return (
+    <div className="rounded-3xl border border-border bg-white/80 p-5 shadow-panel">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold">Shape annotations</h2>
+          <p className="text-xs text-muted">Toggle the overlay cards for each visible contour.</p>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-3">
+        {entries.map(({ path, panel, summary }) => (
+          <label
+            key={path.meta.id}
+            className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-white/70 px-3 py-2"
+          >
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="truncate text-xs font-semibold text-text">{path.meta.name}</span>
+              <span className="text-[11px] text-muted">{describe(summary)}</span>
+            </div>
+            <input
+              type="checkbox"
+              className="h-4 w-4 cursor-pointer rounded border border-border accent-accent"
+              checked={panel.visible}
+              onChange={(event) => setVisibility(path.meta.id, event.target.checked)}
+            />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 const ExportCompass = () => {
   const defaults = useWorkspaceStore((state) => state.oxidationDefaults);
@@ -120,7 +239,7 @@ const ExportCompass = () => {
           className="rounded-full border border-border px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-muted transition hover:border-accent hover:text-accent"
           onClick={toggleDisplayMode}
         >
-          {displayMode === 'directional' ? 'Show totals' : 'Show offsets'}
+          {displayMode === 'directional' ? 'Offsets' : 'Totals'}
         </button>
       </div>
       <div
@@ -334,6 +453,8 @@ const ExportMeasurementsPanel = () => {
 export const ExportView = () => {
   const closeExportView = useWorkspaceStore((state) => state.closeExportView);
 
+  useExportInfoPanelsBootstrap();
+
   return (
     <div className="min-h-screen bg-background px-4 py-6 text-text sm:px-6 lg:px-10">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
@@ -347,13 +468,13 @@ export const ExportView = () => {
           </button>
           <div className="text-right">
             <h1 className="text-xl font-semibold">Export overview</h1>
-            <p className="text-xs text-muted">All essential oxidation data in a single screen capture.</p>
           </div>
         </header>
         <div className="grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
           <div className="flex flex-col gap-6">
             <ExportCompass />
             <UniformThicknessCard />
+            <ShapeInfoTogglePanel />
           </div>
           <div className="flex items-center justify-center">
             <CanvasViewport variant="export" />
