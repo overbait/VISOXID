@@ -2,7 +2,12 @@ import { useRef, useState, type ChangeEvent } from 'react';
 import { useWorkspaceStore } from '../state';
 import { createId } from '../utils/ids';
 import { createCircleNodes } from '../utils/presets';
+import { clamp } from '../utils/math';
 import type { Vec2 } from '../types';
+import { formatDimension } from '../utils/shapeMetrics';
+
+const MIN_OVAL_SCALE = 0.5;
+const MAX_OVAL_SCALE = 2;
 
 export const ScenePanel = () => {
   const selectedPathIds = useWorkspaceStore((state) => state.selectedPathIds);
@@ -26,6 +31,7 @@ export const ScenePanel = () => {
   const [referenceCircleDiameter, setReferenceCircleDiameter] = useState('36');
   const [referenceOvalEnabled, setReferenceOvalEnabled] = useState(false);
   const [referenceOvalScale, setReferenceOvalScale] = useState(1);
+  const [referenceOvalHorizontalDraft, setReferenceOvalHorizontalDraft] = useState('36');
   const [shapeRenameDrafts, setShapeRenameDrafts] = useState<Record<string, string>>({});
   const [sceneRenameDrafts, setSceneRenameDrafts] = useState<Record<string, string>>({});
   const sceneImportInputRef = useRef<HTMLInputElement | null>(null);
@@ -79,6 +85,59 @@ export const ScenePanel = () => {
     URL.revokeObjectURL(link.href);
   };
 
+  const updateHorizontalDraft = (diameter: number, scale: number) => {
+    if (!Number.isFinite(diameter) || diameter <= 0) {
+      setReferenceOvalHorizontalDraft('');
+      return;
+    }
+    const horizontal = diameter * scale;
+    setReferenceOvalHorizontalDraft(formatDimension(horizontal));
+  };
+
+  const handleCircleDiameterChange = (value: string) => {
+    setReferenceCircleDiameter(value);
+    const diameter = Number.parseFloat(value);
+    if (referenceOvalEnabled) {
+      updateHorizontalDraft(diameter, referenceOvalScale);
+    } else if (Number.isFinite(diameter) && diameter > 0) {
+      setReferenceOvalHorizontalDraft(formatDimension(diameter));
+    } else {
+      setReferenceOvalHorizontalDraft('');
+    }
+  };
+
+  const handleOvalScaleChange = (value: number) => {
+    const clampedScale = clamp(value, MIN_OVAL_SCALE, MAX_OVAL_SCALE);
+    setReferenceOvalScale(clampedScale);
+    const diameter = Number.parseFloat(referenceCircleDiameter);
+    updateHorizontalDraft(diameter, clampedScale);
+  };
+
+  const handleHorizontalDiameterChange = (value: string) => {
+    setReferenceOvalHorizontalDraft(value);
+    if (!referenceOvalEnabled) {
+      return;
+    }
+    const circle = Number.parseFloat(referenceCircleDiameter);
+    const horizontal = Number.parseFloat(value);
+    if (!Number.isFinite(circle) || circle <= 0 || !Number.isFinite(horizontal) || horizontal <= 0) {
+      return;
+    }
+    const scale = clamp(horizontal / circle, MIN_OVAL_SCALE, MAX_OVAL_SCALE);
+    setReferenceOvalScale(scale);
+  };
+
+  const resetHorizontalDraft = () => {
+    const diameter = Number.parseFloat(referenceCircleDiameter);
+    if (referenceOvalEnabled) {
+      updateHorizontalDraft(diameter, referenceOvalScale);
+    } else if (Number.isFinite(diameter) && diameter > 0) {
+      setReferenceOvalHorizontalDraft(formatDimension(diameter));
+    } else {
+      setReferenceOvalHorizontalDraft('');
+    }
+  };
+
   const handleSceneImport = async (event: ChangeEvent<HTMLInputElement>) => {
     const [file] = event.target.files ?? [];
     if (!file) return;
@@ -119,8 +178,7 @@ export const ScenePanel = () => {
       return;
     }
     const radius = diameter / 2;
-    const normalized = Math.round(diameter * 10) / 10;
-    const label = Number.isInteger(normalized) ? normalized.toFixed(0) : normalized.toFixed(1);
+    const label = formatDimension(diameter);
     const center = { x: 25, y: 25 };
     let nodes = createCircleNodes(center, radius);
     let name = `Reference circle (${label} μm)`;
@@ -138,10 +196,7 @@ export const ScenePanel = () => {
         handleOut: stretch(node.handleOut),
       }));
       const horizontalDiameter = diameter * scale;
-      const normalizedHorizontal = Math.round(horizontalDiameter * 10) / 10;
-      const horizontalLabel = Number.isInteger(normalizedHorizontal)
-        ? normalizedHorizontal.toFixed(0)
-        : normalizedHorizontal.toFixed(1);
+      const horizontalLabel = formatDimension(horizontalDiameter);
       name = `Reference oval (${label}×${horizontalLabel} μm)`;
     }
     addPath(nodes, {
@@ -234,7 +289,8 @@ export const ScenePanel = () => {
                   min="0"
                   step="0.5"
                   value={referenceCircleDiameter}
-                  onChange={(event) => setReferenceCircleDiameter(event.target.value)}
+                  onChange={(event) => handleCircleDiameterChange(event.target.value)}
+                  onBlur={resetHorizontalDraft}
                   className="rounded-xl border border-border bg-white/80 px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
                 />
               </label>
@@ -243,9 +299,19 @@ export const ScenePanel = () => {
                   type="checkbox"
                   checked={referenceOvalEnabled}
                   onChange={(event) => {
-                    setReferenceOvalEnabled(event.target.checked);
-                    if (!event.target.checked) {
+                    const enabled = event.target.checked;
+                    setReferenceOvalEnabled(enabled);
+                    if (!enabled) {
                       setReferenceOvalScale(1);
+                      const diameter = Number.parseFloat(referenceCircleDiameter);
+                      if (Number.isFinite(diameter) && diameter > 0) {
+                        setReferenceOvalHorizontalDraft(formatDimension(diameter));
+                      } else {
+                        setReferenceOvalHorizontalDraft('');
+                      }
+                    } else {
+                      const diameter = Number.parseFloat(referenceCircleDiameter);
+                      updateHorizontalDraft(diameter, referenceOvalScale);
                     }
                   }}
                   className="h-4 w-4 rounded border border-border"
@@ -253,26 +319,33 @@ export const ScenePanel = () => {
                 <span>Convert to oval</span>
               </label>
               {referenceOvalEnabled && (
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] uppercase tracking-wide text-muted">
-                    Horizontal diameter (
-                    {Number.isFinite(Number.parseFloat(referenceCircleDiameter))
-                      ? `${(Number.parseFloat(referenceCircleDiameter) * referenceOvalScale).toFixed(1)} μm`
-                      : '—'}
-                    )
-                  </span>
+                <label className="flex flex-col gap-2">
+                  <span className="text-[11px] uppercase tracking-wide text-muted">Horizontal diameter</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={referenceOvalHorizontalDraft}
+                      onChange={(event) => handleHorizontalDiameterChange(event.target.value)}
+                      onBlur={resetHorizontalDraft}
+                      className="w-full rounded-xl border border-border bg-white/80 px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
+                      placeholder="—"
+                    />
+                    <span className="text-xs text-muted">μm</span>
+                  </div>
                   <input
                     type="range"
-                    min={0.5}
-                    max={2}
+                    min={MIN_OVAL_SCALE}
+                    max={MAX_OVAL_SCALE}
                     step={0.05}
                     value={referenceOvalScale}
-                    onChange={(event) => setReferenceOvalScale(Number(event.target.value))}
+                    onChange={(event) => handleOvalScaleChange(Number(event.target.value))}
                     className="accent-accent"
                   />
                   <div className="flex justify-between text-[10px] text-muted">
-                    <span>50%</span>
-                    <span>200%</span>
+                    <span>{Math.round(MIN_OVAL_SCALE * 100)}%</span>
+                    <span>{Math.round(MAX_OVAL_SCALE * 100)}%</span>
                   </div>
                 </label>
               )}

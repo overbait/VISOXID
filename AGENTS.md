@@ -275,3 +275,9 @@ Think of this file as the living design history.  Out-of-date instructions cause
 
 ## 2025-11-23 — Proportional compass scaling
 - The compass toggle now reads “Proportional adjustments” and, when enabled, changing the uniform thickness rescales every directional weight by `newUniform / oldUniform`. Keep this behaviour in `applyGlobalOxidation` and guard against division by zero by skipping the rescale when the prior uniform thickness is zero. Manual heading edits should not ripple to other directions regardless of the toggle state.
+
+## 2025-11-24 — Export overlays & oval input
+- Export overview now surfaces draggable annotation cards per contour. State lives in `exportView.infoPanels`; when touching export state ensure new entries go through `ensureExportInfoPanels`/`pruneExportInfoPanels` and clamp world positions against `VIEW_EXTENT_UM` so panels stay within the canvas extent.
+- `<CanvasViewport variant="export" />` renders these cards in a dedicated overlay. Keep them active when adjusting export-mode overlays so screenshot authors can always reposition the annotations.
+- The Scene panel’s reference oval exposes a numeric horizontal diameter input tied to the slider (`MIN_OVAL_SCALE`/`MAX_OVAL_SCALE`). Leave the clamp logic in place when reworking the controls so manual entries and the slider stay in sync.
+- Workspace sessions now default to the Select tool instead of Line; respect the new default when bootstrapping or restoring editor state.

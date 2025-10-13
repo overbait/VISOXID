@@ -3,6 +3,7 @@ import type {
   DirectionWeight,
   ExportMeasurement,
   ExportViewState,
+  ExportInfoPanel,
   MeasurementProbe,
   MeasurementState,
   NodeSelection,
@@ -22,6 +23,7 @@ import type {
   WorkspaceSnapshot,
   WorkspaceState,
 } from '../types';
+import { VIEW_EXTENT_UM } from '../canvas/viewTransform';
 import type { ThicknessOptions } from '../geometry/thickness';
 import { createId } from '../utils/ids';
 import {
@@ -169,6 +171,11 @@ const cloneExportView = (view: ExportViewState): ExportViewState => ({
   previousTool: view.previousTool,
   measurements: view.measurements.map((entry) => cloneExportMeasurement(entry)),
   sequence: view.sequence,
+  infoPanels: view.infoPanels.map((panel) => ({
+    pathId: panel.pathId,
+    position: { ...panel.position },
+    visible: panel.visible,
+  })),
 });
 
 const sanitizeExportView = (value: Partial<ExportViewState> | undefined): ExportViewState => {
@@ -178,6 +185,7 @@ const sanitizeExportView = (value: Partial<ExportViewState> | undefined): Export
       previousTool: null,
       measurements: [],
       sequence: 1,
+      infoPanels: [],
     };
   }
   const measurements = Array.isArray(value.measurements)
@@ -211,6 +219,24 @@ const sanitizeExportView = (value: Partial<ExportViewState> | undefined): Export
     previousTool: (value.previousTool ?? null) as ToolId | null,
     measurements,
     sequence,
+    infoPanels: Array.isArray(value.infoPanels)
+      ? value.infoPanels
+          .map((panel) => {
+            if (!panel || typeof panel !== 'object') {
+              return null;
+            }
+            const position = sanitizeVec2((panel as ExportInfoPanel).position, { x: 25, y: 24 });
+            const pathId = typeof (panel as ExportInfoPanel).pathId === 'string'
+              ? (panel as ExportInfoPanel).pathId
+              : createId('path');
+            return {
+              pathId,
+              position,
+              visible: Boolean((panel as ExportInfoPanel).visible ?? true),
+            } satisfies ExportInfoPanel;
+          })
+          .filter((panel): panel is ExportInfoPanel => Boolean(panel))
+      : [],
   };
 };
 
@@ -1195,7 +1221,7 @@ const createEmptyState = (library: StoredShape[] = [], scenes: StoredScene[] = [
   paths: [],
   selectedPathIds: [],
   nodeSelection: null,
-  activeTool: 'line',
+  activeTool: 'select',
   pan: { x: 0, y: 0 },
   zoom: 1,
   grid: {
@@ -1223,6 +1249,7 @@ const createEmptyState = (library: StoredShape[] = [], scenes: StoredScene[] = [
     previousTool: null,
     measurements: [],
     sequence: 1,
+    infoPanels: [],
   },
   warnings: [],
   history: [],
@@ -1372,6 +1399,10 @@ type WorkspaceActions = {
   addExportMeasurement: (probe: MeasurementProbe) => void;
   updateExportMeasurementColor: (id: string, color: string) => void;
   removeExportMeasurement: (id: string) => void;
+  ensureExportInfoPanels: (panels: Array<{ pathId: string; position: Vec2 }>) => void;
+  pruneExportInfoPanels: (validPathIds: string[]) => void;
+  setExportInfoPanelPosition: (pathId: string, position: Vec2) => void;
+  setExportInfoPanelVisibility: (pathId: string, visible: boolean) => void;
 };
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -2250,6 +2281,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         previousTool: null,
         measurements: [],
         sequence: 1,
+        infoPanels: [],
       },
       history: [],
       future: [],
@@ -2468,7 +2500,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (!state.exportView.active) {
         return state;
       }
-      const previousTool = state.exportView.previousTool ?? 'line';
+      const previousTool = state.exportView.previousTool ?? 'select';
       return {
         ...state,
         exportView: {
@@ -2525,4 +2557,99 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       },
       dirty: true,
     })),
+  ensureExportInfoPanels: (panels) =>
+    set((state) => {
+      if (!panels.length) {
+        return state;
+      }
+      const existing = new Set(state.exportView.infoPanels.map((panel) => panel.pathId));
+      const additions: ExportInfoPanel[] = [];
+      for (const panel of panels) {
+        if (!panel.pathId || existing.has(panel.pathId)) {
+          continue;
+        }
+        const clampedPosition: Vec2 = {
+          x: clamp(panel.position.x, 0, VIEW_EXTENT_UM),
+          y: clamp(panel.position.y, 0, VIEW_EXTENT_UM),
+        };
+        additions.push({ pathId: panel.pathId, position: clampedPosition, visible: true });
+        existing.add(panel.pathId);
+      }
+      if (!additions.length) {
+        return state;
+      }
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          infoPanels: [...state.exportView.infoPanels, ...additions],
+        },
+        dirty: true,
+      };
+    }),
+  pruneExportInfoPanels: (validPathIds) =>
+    set((state) => {
+      const valid = new Set(validPathIds);
+      const filtered = state.exportView.infoPanels.filter((panel) => valid.has(panel.pathId));
+      if (filtered.length === state.exportView.infoPanels.length) {
+        return state;
+      }
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          infoPanels: filtered,
+        },
+        dirty: true,
+      };
+    }),
+  setExportInfoPanelPosition: (pathId, position) =>
+    set((state) => {
+      const index = state.exportView.infoPanels.findIndex((panel) => panel.pathId === pathId);
+      if (index === -1) {
+        return state;
+      }
+      const clampedPosition: Vec2 = {
+        x: clamp(position.x, 0, VIEW_EXTENT_UM),
+        y: clamp(position.y, 0, VIEW_EXTENT_UM),
+      };
+      const current = state.exportView.infoPanels[index];
+      if (
+        Math.abs(current.position.x - clampedPosition.x) < 1e-4 &&
+        Math.abs(current.position.y - clampedPosition.y) < 1e-4
+      ) {
+        return state;
+      }
+      const nextPanels = [...state.exportView.infoPanels];
+      nextPanels[index] = { ...current, position: clampedPosition };
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          infoPanels: nextPanels,
+        },
+        dirty: true,
+      };
+    }),
+  setExportInfoPanelVisibility: (pathId, visible) =>
+    set((state) => {
+      const index = state.exportView.infoPanels.findIndex((panel) => panel.pathId === pathId);
+      if (index === -1) {
+        return state;
+      }
+      const current = state.exportView.infoPanels[index];
+      if (current.visible === visible) {
+        return state;
+      }
+      const nextPanels = [...state.exportView.infoPanels];
+      nextPanels[index] = { ...current, visible };
+      return {
+        ...state,
+        exportView: {
+          ...state.exportView,
+          infoPanels: nextPanels,
+        },
+        dirty: true,
+      };
+    }),
 }));
